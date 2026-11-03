@@ -234,7 +234,7 @@ window.addEventListener('error',function(e){showErr(e.message||'unknown')});
 window.addEventListener('unhandledrejection',function(e){showErr(String((e.reason&&e.reason.message)||e.reason))});
 
 /* ================= helpers ================= */
-var KEY='garage_os_fresh_v1',VERSION='3.0';
+var KEY='garage_os_fresh_v1',VERSION='3.1';
 var $=function(s,r){return (r||document).querySelector(s)};
 var num=function(v){var n=parseFloat(v);return isFinite(n)?n:0};
 var pad=function(n){return String(n).padStart(2,'0')};
@@ -826,37 +826,73 @@ async function shareBill(id){
     blob=await canvasToBlob(canvas);
     var cleanNo=String(b.billNo||'Invoice').replace(/[^a-z0-9_-]/gi,'_');
     fileName='CarvoX-'+cleanNo+'.png';
-
-    // Capacitor Android: save the PNG in CACHE and pass it as a file attachment.
-    // Passing it as `url` caused the Android share sheet to receive a link rather than an image attachment.
     var cap=window.Capacitor;
-    if(cap&&cap.isNativePlatform&&cap.isNativePlatform()){
-      try{
-        var fs=nativePlugin('Filesystem'),sh=nativePlugin('Share');
-        if(fs&&typeof fs.writeFile==='function'&&sh&&typeof sh.share==='function'){
-          var base64=await blobToBase64(blob);
-          var saved=await fs.writeFile({path:'CarvoX-'+cleanNo+'-'+Date.now()+'.png',data:base64,directory:'CACHE',encoding:'base64'});
+    var isNative=!!(cap&&cap.isNativePlatform&&cap.isNativePlatform());
+
+    // Android/iOS Capacitor: FileSharer creates a real image attachment with
+    // a FileProvider URI, ClipData and read grants for the receiving app.
+    if(isNative){
+      var base64=await blobToBase64(blob);
+      var fileSharer=nativePlugin('FileSharer');
+      if(fileSharer&&typeof fileSharer.share==='function'){
+        try{
+          await fileSharer.share({
+            filename:fileName,
+            contentType:'image/png',
+            base64Data:base64,
+            title:'CarvoX Invoice '+(b.billNo||''),
+            android:{chooserTitle:'Share invoice image'}
+          });
+          return;
+        }catch(fileShareError){
+          console.warn('FileSharer failed; trying Capacitor Share fallback.',fileShareError);
+        }
+      }
+
+      // Fallback to the official Capacitor Share plugin.
+      var fs=nativePlugin('Filesystem'),sh=nativePlugin('Share');
+      if(fs&&typeof fs.writeFile==='function'&&sh&&typeof sh.share==='function'){
+        try{
+          var saved=await fs.writeFile({
+            path:'CarvoX-'+cleanNo+'-'+Date.now()+'.png',
+            data:base64,
+            directory:'CACHE',
+            encoding:'base64'
+          });
           if(saved&&saved.uri){
-            await sh.share({title:'CarvoX Invoice '+(b.billNo||''),files:[saved.uri],dialogTitle:'Share invoice image'});
+            await sh.share({
+              title:'CarvoX Invoice '+(b.billNo||''),
+              files:[saved.uri],
+              dialogTitle:'Share invoice image'
+            });
             return;
           }
+        }catch(shareError){
+          console.error('Capacitor Share fallback failed:',shareError);
         }
-      }catch(nativeError){console.warn('Native invoice sharing unavailable; trying Web Share.',nativeError)}
+      }
+
+      // Do not call navigator.share inside a native WebView: expose the PNG
+      // preview/download instead of opening a share sheet with a broken URI.
+      showInvoiceImagePreview(blob,fileName,'Invoice image ready');
+      toast('Could not open native sharing. Download the PNG and share it from your phone.');
+      return;
     }
 
-    // Browser / supported WebView: send the PNG file, not invoice text.
+    // Browser / Chrome: share the PNG File with the Web Share API when supported.
     if(typeof File!=='undefined'&&navigator.share){
       try{
         var file=new File([blob],fileName,{type:'image/png'});
         var canShareFiles=!navigator.canShare||navigator.canShare({files:[file]});
-        if(canShareFiles){await navigator.share({files:[file],title:'CarvoX Invoice '+(b.billNo||'')});return;}
+        if(canShareFiles){
+          await navigator.share({files:[file],title:'CarvoX Invoice '+(b.billNo||'')});
+          return;
+        }
       }catch(webShareError){
         if(webShareError&&webShareError.name==='AbortError')return;
         console.warn('Web Share unavailable; showing the generated invoice image.',webShareError);
       }
     }
-
-    // Never leave the user with an empty share action: show the actual image and a PNG download.
     showInvoiceImagePreview(blob,fileName,'Invoice image ready');
   }catch(e){
     console.error('CarvoX invoice image error:',e);
@@ -866,46 +902,68 @@ async function shareBill(id){
 }
 async function printBill(id){
   var b=byId(data.bills,id);if(!b)return;
-  var pa=$('#printArea');if(!pa){toast('Print area is unavailable');return;}
-  var cleaned=false,printTimer=null;
-  var done=function(){
-    if(cleaned)return;cleaned=true;
-    document.body.classList.remove('printing');
-    pa.innerHTML='';
-    window.removeEventListener('afterprint',done);
-    if(printTimer)clearTimeout(printTimer);
-  };
+  var pa=$('#printArea');
   try{
     toast('Preparing print-ready invoice…');
     var canvas=await renderInvoiceCanvas(b);
     var imageUrl=canvas.toDataURL('image/png');
+    var cap=window.Capacitor;
+    var isNative=!!(cap&&cap.isNativePlatform&&cap.isNativePlatform());
+
+    // Capacitor Android/iOS: use the native print framework instead of
+    // window.print(), which is not reliably implemented by Android WebView.
+    if(isNative){
+      var printer=nativePlugin('Printer');
+      if(printer&&typeof printer.printBase64==='function'){
+        var rawBase64=imageUrl.split(',')[1]||'';
+        await printer.printBase64({
+          name:'CarvoX-'+String(b.billNo||'Invoice'),
+          data:rawBase64,
+          mimeType:'image/png'
+        });
+        return;
+      }
+      var nativeBlob=await canvasToBlob(canvas);
+      showInvoiceImagePreview(nativeBlob,'CarvoX-'+String(b.billNo||'Invoice')+'.png','Print-ready invoice');
+      toast('Native print is unavailable. Download the PNG and print it from your phone.');
+      return;
+    }
+
+    // Browser / Chrome fallback: print the exact same invoice PNG.
+    if(!pa){toast('Print area is unavailable');return;}
+    var cleaned=false;
+    var done=function(){
+      if(cleaned)return;cleaned=true;
+      document.body.classList.remove('printing');
+      pa.innerHTML='';
+      window.removeEventListener('afterprint',done);
+    };
     pa.innerHTML='<img class="invoice-print-image" alt="CarvoX invoice '+esc(b.billNo||'')+'" src="'+imageUrl+'" style="display:block;width:100%;height:auto">';
+    var printImg=pa.querySelector('img');
     document.body.classList.add('printing');
     window.addEventListener('afterprint',done,{once:true});
-    // The print document now contains the exact invoice artwork as a PNG, not plain text.
+    if(printImg&&!printImg.complete){
+      await new Promise(function(resolve){printImg.onload=resolve;printImg.onerror=resolve;setTimeout(resolve,2500)});
+    }
     setTimeout(function(){
       try{
-        if(typeof window.print==='function'){
-          window.focus();window.print();
-          // Some Android WebViews do not emit afterprint. Keep the print image until the dialog has time to open.
-          printTimer=setTimeout(done,45000);
-        }else{
-          done();
-          var blobUrl=canvas.toDataURL('image/png');
-          showInvoiceImagePreview(dataUrlToBlob(blobUrl),'CarvoX-'+String(b.billNo||'Invoice')+'.png','Print-ready invoice');
-          toast('Print is unavailable here. Download the invoice PNG and print it from your phone.');
-        }
+        window.focus();
+        window.print();
       }catch(printError){
         done();
-        console.error('CarvoX print error:',printError);
-        try{showInvoiceImagePreview(dataUrlToBlob(imageUrl),'CarvoX-'+String(b.billNo||'Invoice')+'.png','Print-ready invoice')}catch(ignore){}
-        toast('Print could not open. The print-ready invoice image is available.');
+        console.error('CarvoX browser print error:',printError);
+        canvasToBlob(canvas).then(function(blob){
+          showInvoiceImagePreview(blob,'CarvoX-'+String(b.billNo||'Invoice')+'.png','Print-ready invoice');
+        });
+        toast('Print could not open. The invoice PNG is ready to download.');
       }
-    },350);
+    },250);
+    setTimeout(done,60000);
   }catch(e){
-    done();
-    console.error('CarvoX print preparation error:',e);
-    toast('Could not prepare invoice for printing: '+(e&&e.message?e.message:'Please try again.'));
+    document.body.classList.remove('printing');
+    if(pa)pa.innerHTML='';
+    console.error('CarvoX print error:',e);
+    toast('Could not print invoice: '+(e&&e.message?e.message:'Please try again.'));
   }
 }
 function dataUrlToBlob(dataUrl){
@@ -1299,9 +1357,9 @@ function about(){
   openSheet(sheetHead('CarvoX '+VERSION)+
     '<h3 style="margin-top:4px">Latest updates</h3><ul style="padding-left:20px;line-height:1.7;color:var(--muted);margin:0">'+
     '<li>Monthly Profit &amp; Loss now shows Earnings, Profit, Expenses and Net.</li>'+
-    '<li>Invoices can be shared as a complete PNG image using the phone sharing panel.</li>'+ 
-    '<li>Print uses the same designed invoice artwork, including the garage logo and payment summary.</li>'+ 
-    '<li>The direct WhatsApp invoice shortcut has been removed. Use Share image to choose a sharing app.</li>'+ 
+    '<li>Invoices are shared as PNG image attachments through the native Android sharing panel.</li>'+ 
+    '<li>Print uses the native Android print dialog and preserves the invoice artwork, garage logo and payment summary.</li>'+ 
+    '<li>The direct WhatsApp invoice shortcut has been removed. Use Share image to choose WhatsApp or another sharing app.</li>'+ 
     '</ul><h3>App features</h3><ul style="padding-left:20px;line-height:1.7;color:var(--muted);margin:0">'+
     '<li>Dashboard with daily earnings, expenses, profit, bills and pending dues.</li>'+ 
     '<li>Stock management, suppliers and stock purchase records.</li>'+ 
