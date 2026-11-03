@@ -1,53 +1,73 @@
-name: CarvoX APK
+name: CARVOX APK
+run-name: CARVOX APK
 
-on:
-workflow_dispatch:
+"on":
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
-build:
-runs-on: ubuntu-latest
+  android:
+    name: Build CARVOX Android APK
+    runs-on: ubuntu-latest
 
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
 
-  - name: Setup Node.js
-    uses: actions/setup-node@v4
-    with:
-      node-version: 20
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-  - name: Setup Java
-    uses: actions/setup-java@v4
-    with:
-      distribution: temurin
-      java-version: 17
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
 
-  - name: Install dependencies
-    run: npm install
+      - name: Install project dependencies
+        run: npm install
 
-  - name: Build CarvoX web assets
-    run: npm run build
+      - name: Prepare app logo
+        run: |
+          mkdir -p assets
+          if [ -f assets/icon.png ]; then
+            cp assets/icon.png assets/carvox-logo.png
+          else
+            echo "ERROR: assets/icon.png is missing. Upload the CARVOX logo there."
+            exit 1
+          fi
 
-  - name: Install Capacitor Assets
-    run: npm install --save-dev @capacitor/assets
+      - name: Build CarvoX web assets
+        run: npm run build
 
-  - name: Generate Android project
-    run: npx cap add android
+      - name: Install Capacitor asset generator
+        run: npm install --save-dev @capacitor/assets
 
-  - name: Generate CARVOX launcher icons
-    run: npx capacitor-assets generate --android
+      - name: Add Android platform
+        run: npx cap add android
 
-  - name: Sync Capacitor
-    run: npx cap sync android
+      - name: Generate Android app icon and splash assets
+        run: npx @capacitor/assets generate --android --iconBackgroundColor '#061326' --splashBackgroundColor '#061326'
 
-  - name: Build APK
-    run: |
-      cd android
-      chmod +x gradlew
-      ./gradlew assembleDebug
+      - name: Sync Capacitor Android project
+        run: npx cap sync android
 
-  - name: Upload APK
-    uses: actions/upload-artifact@v4
-    with:
-      name: CarvoX-APK
-      path: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Build debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload CARVOX APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CARVOX-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          
