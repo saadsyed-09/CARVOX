@@ -71,6 +71,11 @@ p{margin:0}
 .ph{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 14px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.grid4 .stat{min-width:0;padding:10px 8px;overflow:hidden}
+.grid4 .stat .l{font-size:.68rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grid4 .stat .n{font-size:.92rem;line-height:1.25;white-space:nowrap;letter-spacing:-.25px}
+@media(max-width:380px){.grid4{gap:5px}.grid4 .stat{padding:9px 5px}.grid4 .stat .l{font-size:.62rem}.grid4 .stat .n{font-size:.78rem}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:14px;
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   box-shadow:0 10px 26px var(--shadow),inset 0 1px 0 rgba(255,255,255,.07)}
@@ -200,6 +205,7 @@ nav button.on .ic{color:var(--accent2)}
   body.printing #printArea .paper{display:block!important;width:100%!important;max-width:100%!important;margin:0 auto!important;border-radius:0!important;padding:8mm!important;box-shadow:none!important;break-inside:avoid;page-break-inside:avoid}
   body.printing #printArea .paper *{color:#0b1b36!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   body.printing #printArea .paper .stamp.ok{color:#0f9d78!important}
+  body.printing #printArea .invoice-print-image{display:block!important;width:100%!important;height:auto!important;max-width:100%!important;object-fit:contain!important}
 }
 </style>
 </head>
@@ -802,50 +808,111 @@ function blobToBase64(blob){
     var reader=new FileReader();reader.onload=function(){resolve(String(reader.result).split(',')[1]||'')};reader.onerror=function(){reject(new Error('Could not prepare image for sharing'))};reader.readAsDataURL(blob);
   });
 }
+function showInvoiceImagePreview(blob,fileName,title){
+  var objectUrl=URL.createObjectURL(blob);
+  var h=sheetHead(title||'Invoice image ready')+
+    '<div style="background:#fff;border-radius:16px;padding:8px;text-align:center"><img src="'+esc(objectUrl)+'" alt="CarvoX invoice" style="display:block;width:100%;height:auto;max-height:55vh;object-fit:contain;border-radius:10px"></div>'+
+    '<p class="note">The invoice image is ready. Save the PNG, then share it from your phone if the sharing panel is unavailable.</p>'+
+    '<div class="actions"><a class="btn primary" style="flex:1" href="'+esc(objectUrl)+'" download="'+esc(fileName)+'">'+ic('download',18)+'Download PNG</a><button onclick="CX.close()">Done</button></div>';
+  openSheet(h);
+  setTimeout(function(){try{URL.revokeObjectURL(objectUrl)}catch(e){}},120000);
+}
 async function shareBill(id){
   var b=byId(data.bills,id);if(!b)return;
+  var blob=null,fileName='CarvoX-Invoice.png';
   try{
     toast('Preparing invoice image…');
-    var canvas=await renderInvoiceCanvas(b),blob=await canvasToBlob(canvas);
-    var fileName='CarvoX-'+String(b.billNo||'Invoice').replace(/[^a-z0-9_-]/gi,'_')+'.png';
+    var canvas=await renderInvoiceCanvas(b);
+    blob=await canvasToBlob(canvas);
+    var cleanNo=String(b.billNo||'Invoice').replace(/[^a-z0-9_-]/gi,'_');
+    fileName='CarvoX-'+cleanNo+'.png';
+
+    // Capacitor Android: save the PNG in CACHE and pass it as a file attachment.
+    // Passing it as `url` caused the Android share sheet to receive a link rather than an image attachment.
     var cap=window.Capacitor;
     if(cap&&cap.isNativePlatform&&cap.isNativePlatform()){
-      var fs=nativePlugin('Filesystem'),sh=nativePlugin('Share');
-      if(fs&&sh){
-        var base64=await blobToBase64(blob);
-        var saved=await fs.writeFile({path:fileName,data:base64,directory:'CACHE',encoding:'base64'});
-        await sh.share({title:'CarvoX Invoice '+(b.billNo||''),url:saved.uri,dialogTitle:'Share invoice image'});
-        return;
+      try{
+        var fs=nativePlugin('Filesystem'),sh=nativePlugin('Share');
+        if(fs&&typeof fs.writeFile==='function'&&sh&&typeof sh.share==='function'){
+          var base64=await blobToBase64(blob);
+          var saved=await fs.writeFile({path:'CarvoX-'+cleanNo+'-'+Date.now()+'.png',data:base64,directory:'CACHE',encoding:'base64'});
+          if(saved&&saved.uri){
+            await sh.share({title:'CarvoX Invoice '+(b.billNo||''),files:[saved.uri],dialogTitle:'Share invoice image'});
+            return;
+          }
+        }
+      }catch(nativeError){console.warn('Native invoice sharing unavailable; trying Web Share.',nativeError)}
+    }
+
+    // Browser / supported WebView: send the PNG file, not invoice text.
+    if(typeof File!=='undefined'&&navigator.share){
+      try{
+        var file=new File([blob],fileName,{type:'image/png'});
+        var canShareFiles=!navigator.canShare||navigator.canShare({files:[file]});
+        if(canShareFiles){await navigator.share({files:[file],title:'CarvoX Invoice '+(b.billNo||'')});return;}
+      }catch(webShareError){
+        if(webShareError&&webShareError.name==='AbortError')return;
+        console.warn('Web Share unavailable; showing the generated invoice image.',webShareError);
       }
     }
-    if(typeof File!=='undefined'&&navigator.share&&navigator.canShare){
-      var file=new File([blob],fileName,{type:'image/png'});
-      if(navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'CarvoX Invoice '+(b.billNo||'')});return}
-    }
-    var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=fileName;a.style.display='none';document.body.appendChild(a);a.click();
-    setTimeout(function(){URL.revokeObjectURL(url);a.remove()},4000);toast('Invoice PNG saved to Downloads.');
-  }catch(e){console.error(e);toast('Image sharing failed: '+(e&&e.message?e.message:'Please try again.'))}
+
+    // Never leave the user with an empty share action: show the actual image and a PNG download.
+    showInvoiceImagePreview(blob,fileName,'Invoice image ready');
+  }catch(e){
+    console.error('CarvoX invoice image error:',e);
+    toast('Could not create invoice image: '+(e&&e.message?e.message:'Please try again.'));
+    if(blob)showInvoiceImagePreview(blob,fileName,'Invoice image');
+  }
 }
-function printBill(id){
+async function printBill(id){
   var b=byId(data.bills,id);if(!b)return;
-  var pa=$('#printArea');
-  pa.innerHTML=invoiceHTML(b);
-  document.body.classList.add('printing');
-  var cleaned=false;
-  var done=function(){if(cleaned)return;cleaned=true;document.body.classList.remove('printing');pa.innerHTML='';window.removeEventListener('afterprint',done)};
-  window.addEventListener('afterprint',done,{once:true});
-  var images=Array.prototype.slice.call(pa.querySelectorAll('img'));
-  Promise.all(images.map(function(img){
-    if(img.complete)return Promise.resolve();
-    return new Promise(function(resolve){img.onload=resolve;img.onerror=resolve;setTimeout(resolve,2500)});
-  })).then(function(){
+  var pa=$('#printArea');if(!pa){toast('Print area is unavailable');return;}
+  var cleaned=false,printTimer=null;
+  var done=function(){
+    if(cleaned)return;cleaned=true;
+    document.body.classList.remove('printing');
+    pa.innerHTML='';
+    window.removeEventListener('afterprint',done);
+    if(printTimer)clearTimeout(printTimer);
+  };
+  try{
+    toast('Preparing print-ready invoice…');
+    var canvas=await renderInvoiceCanvas(b);
+    var imageUrl=canvas.toDataURL('image/png');
+    pa.innerHTML='<img class="invoice-print-image" alt="CarvoX invoice '+esc(b.billNo||'')+'" src="'+imageUrl+'" style="display:block;width:100%;height:auto">';
+    document.body.classList.add('printing');
+    window.addEventListener('afterprint',done,{once:true});
+    // The print document now contains the exact invoice artwork as a PNG, not plain text.
     setTimeout(function(){
-      try{window.focus();window.print()}
-      catch(e){done();toast('Print is not available in this Android view. Open CarvoX in Chrome and use Print.')}
-    },220);
-  });
-  // Safety cleanup only if the Android WebView does not send afterprint.
-  setTimeout(done,60000);
+      try{
+        if(typeof window.print==='function'){
+          window.focus();window.print();
+          // Some Android WebViews do not emit afterprint. Keep the print image until the dialog has time to open.
+          printTimer=setTimeout(done,45000);
+        }else{
+          done();
+          var blobUrl=canvas.toDataURL('image/png');
+          showInvoiceImagePreview(dataUrlToBlob(blobUrl),'CarvoX-'+String(b.billNo||'Invoice')+'.png','Print-ready invoice');
+          toast('Print is unavailable here. Download the invoice PNG and print it from your phone.');
+        }
+      }catch(printError){
+        done();
+        console.error('CarvoX print error:',printError);
+        try{showInvoiceImagePreview(dataUrlToBlob(imageUrl),'CarvoX-'+String(b.billNo||'Invoice')+'.png','Print-ready invoice')}catch(ignore){}
+        toast('Print could not open. The print-ready invoice image is available.');
+      }
+    },350);
+  }catch(e){
+    done();
+    console.error('CarvoX print preparation error:',e);
+    toast('Could not prepare invoice for printing: '+(e&&e.message?e.message:'Please try again.'));
+  }
+}
+function dataUrlToBlob(dataUrl){
+  var parts=String(dataUrl).split(','),mime=(parts[0].match(/data:([^;]+)/)||[])[1]||'image/png';
+  var raw=atob(parts[1]||''),bytes=new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+  return new Blob([bytes],{type:mime});
 }
 
 /* ================= native share / backup ================= */
@@ -1134,7 +1201,13 @@ VIEW.reports=function(){
   var pm=pnlMonth||today().slice(0,7),y=+pm.slice(0,4),mo=+pm.slice(5,7),dim=new Date(y,mo,0).getDate(),inc=0;
   for(var d=1;d<=dim;d++)inc+=receivedOn(pm+'-'+pad(d));
   var mex=sumExp(data.expenses.filter(function(e){return (e.date||'').indexOf(pm)===0})),mb=data.bills.filter(function(b){return (b.date||'').indexOf(pm)===0});
-  h+='<h3>Monthly profit &amp; loss</h3><div class="card"><input type="month" value="'+esc(pm)+'" onchange="CX.pnl(this.value)"><div class="grid3" style="margin-top:12px"><div class="stat"><div class="l">Income</div><div class="n" style="font-size:1rem">'+money(inc)+'</div></div><div class="stat"><div class="l">Expenses</div><div class="n" style="font-size:1rem">'+money(mex)+'</div></div><div class="stat"><div class="l">Net</div><div class="n" style="font-size:1rem;color:'+(inc-mex>=0?'var(--ok)':'var(--bad)')+'">'+money(inc-mex)+'</div></div></div><div class="note">'+mb.length+' bill'+(mb.length===1?'':'s')+' in this month. Income counts money actually received.</div></div>';
+  var mprofit=mb.reduce(function(a,b){return a+num(b.profit)},0),net=inc-mex;
+  h+='<h3>Monthly profit &amp; loss</h3><div class="card"><input type="month" value="'+esc(pm)+'" onchange="CX.pnl(this.value)"><div class="grid4" style="margin-top:12px">'+
+   '<div class="stat"><div class="l">Earnings</div><div class="n">'+money(inc)+'</div></div>'+
+   '<div class="stat"><div class="l">Profit</div><div class="n">'+money(mprofit)+'</div></div>'+
+   '<div class="stat"><div class="l">Expenses</div><div class="n">'+money(mex)+'</div></div>'+
+   '<div class="stat"><div class="l">Net</div><div class="n" style="color:'+(net>=0?'var(--ok)':'var(--bad)')+'">'+money(net)+'</div></div>'+
+   '</div><div class="note">'+mb.length+' bill'+(mb.length===1?'':'s')+' in this month. Earnings count money actually received. Profit is the sum of profit entered on bills. Net = Earnings − Expenses.</div></div>';
   return h;
 };
 function chartItems(kind){
@@ -1223,7 +1296,22 @@ function showLock(){
   setTimeout(function(){$('#lk').focus()},50);
 }
 function about(){
-  openSheet(sheetHead('CarvoX '+VERSION)+'<ul style="padding-left:20px;line-height:1.7;color:var(--muted);margin:0"><li>New premium blue design with glass cards.</li><li>Tap any bill to preview, share the invoice as an image or print it.</li><li>Dues now update automatically when you receive a payment.</li><li>Attendance calendar: tap a date to set status.</li><li>Suppliers, stock purchases and salary payments.</li><li>Reports with charts and monthly profit &amp; loss.</li><li>Backup export, copy and restore. PIN lock. Themes and wallpapers.</li><li>Your earlier records stay on this device.</li></ul>');
+  openSheet(sheetHead('CarvoX '+VERSION)+
+    '<h3 style="margin-top:4px">Latest updates</h3><ul style="padding-left:20px;line-height:1.7;color:var(--muted);margin:0">'+
+    '<li>Monthly Profit &amp; Loss now shows Earnings, Profit, Expenses and Net.</li>'+
+    '<li>Invoices can be shared as a complete PNG image using the phone sharing panel.</li>'+ 
+    '<li>Print uses the same designed invoice artwork, including the garage logo and payment summary.</li>'+ 
+    '<li>The direct WhatsApp invoice shortcut has been removed. Use Share image to choose a sharing app.</li>'+ 
+    '</ul><h3>App features</h3><ul style="padding-left:20px;line-height:1.7;color:var(--muted);margin:0">'+
+    '<li>Dashboard with daily earnings, expenses, profit, bills and pending dues.</li>'+ 
+    '<li>Stock management, suppliers and stock purchase records.</li>'+ 
+    '<li>Billing with customer and vehicle details, service charges, stock parts, custom items, payments and dues.</li>'+ 
+    '<li>Customer profiles and service history.</li>'+ 
+    '<li>Staff profiles, attendance calendar, leave tracking and salary payments.</li>'+ 
+    '<li>Expense tracking, reports, charts and monthly Profit &amp; Loss.</li>'+ 
+    '<li>Data backup, restore, PIN lock, themes, font size and wallpapers.</li>'+ 
+    '<li>Your records are stored locally on this device. Export a backup regularly.</li>'+ 
+    '</ul>');
 }
 
 /* ================= public API ================= */
@@ -1263,4 +1351,3 @@ try{
 </script>
 </body>
 </html>
-
