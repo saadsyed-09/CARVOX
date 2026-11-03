@@ -196,8 +196,8 @@ nav button.on .ic{color:var(--accent2)}
   @page{size:auto;margin:10mm}
   html,body{background:#fff!important;margin:0!important;padding:0!important}
   body.printing #app,body.printing .overlay,body.printing #bgLayer,body.printing nav,body.printing header,body.printing #errbar{display:none!important}
-  body.printing #printArea{display:block!important;width:100%;background:#fff!important;color:#0b1b36!important}
-  body.printing #printArea .paper{display:block!important;width:100%!important;max-width:100%!important;margin:0 auto!important;border-radius:0!important;padding:8mm!important;box-shadow:none!important;break-inside:avoid}
+  body.printing #printArea{display:block!important;position:static!important;width:100%!important;background:#fff!important;color:#0b1b36!important}
+  body.printing #printArea .paper{display:block!important;width:100%!important;max-width:100%!important;margin:0 auto!important;border-radius:0!important;padding:8mm!important;box-shadow:none!important;break-inside:avoid;page-break-inside:avoid}
   body.printing #printArea .paper *{color:#0b1b36!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   body.printing #printArea .paper .stamp.ok{color:#0f9d78!important}
 }
@@ -295,4 +295,972 @@ function normalize(d){
   return out;
 }
 var data=load();
-function save(){try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){showErr('Storage is
+function save(){try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){showErr('Storage is full or blocked. Export a backup.')}}
+function persist(){save();render()}
+var KEYMAP={customer:'customers',stock:'stock',bill:'bills',expense:'expenses',staff:'staff',attendance:'attendance',supplier:'suppliers',purchase:'purchases',salary:'salaryPayments',billpay:'billPayments'};
+
+/* ================= look & feel ================= */
+var BG_STYLE='gm_liquid_bg_style_v3',BG_OP='gm_liquid_bg_opacity_v3',BG_CUSTOM='gm_liquid_bg_custom_v3';
+function themeName(){var t=data.settings.theme;return t==='light'?'light':(t==='dark'||t==='midnight')?'midnight':'blue'}
+function bgState(){
+  var s='cars',o='88',c='';
+  try{s=localStorage.getItem(BG_STYLE)||'cars';o=localStorage.getItem(BG_OP)||'88';c=localStorage.getItem(BG_CUSTOM)||''}catch(e){}
+  if(s==='green')s='blue';
+  if(s==='custom'&&!c)s='cars';
+  return{s:s,o:num(o),c:c};
+}
+function applyLook(){
+  document.body.setAttribute('data-theme',themeName());
+  document.documentElement.style.fontSize=(16*(num(data.settings.fontScale)||1))+'px';
+  var b=bgState(),L=$('#bgLayer'),img='none';
+  if(b.s==='cars')img='url("garage-bg.png")';else if(b.s==='custom')img='url("'+b.c+'")';
+  L.style.backgroundImage=img;
+  L.style.opacity=String(Math.max(0,Math.min(1,b.o/100))*0.6);
+}
+
+/* ================= sheets (with Android back support) ================= */
+var stack=[],ignorePops=0;
+function openSheet(html,cls){
+  var o=document.createElement('div');o.className='overlay';
+  o.innerHTML='<div class="sheet '+(cls||'')+'"><div class="handle"></div>'+html+'</div>';
+  o.addEventListener('click',function(e){if(e.target===o)closeSheet()});
+  document.body.appendChild(o);stack.push(o);
+  try{history.pushState({cx:stack.length},'')}catch(e){}
+  return o;
+}
+function closeSheet(){
+  var o=stack.pop();if(!o)return;o.remove();
+  ignorePops++;try{history.back()}catch(e){ignorePops--}
+}
+function closeAll(){
+  var n=stack.length;if(!n)return;
+  while(stack.length)stack.pop().remove();
+  ignorePops++;try{history.go(-n)}catch(e){ignorePops--}
+}
+window.addEventListener('popstate',function(){
+  if(ignorePops>0){ignorePops--;return}
+  var o=stack.pop();if(o)o.remove();
+});
+function sheetHead(title){return '<div class="sh"><h2>'+title+'</h2><button class="xbtn" onclick="CX.close()" aria-label="Close">'+ic('x',18)+'</button></div>'}
+function ask(msg,label,fn,danger){
+  var o=openSheet(sheetHead('Please confirm')+'<p style="color:var(--muted);line-height:1.5">'+esc(msg)+'</p><div class="actions"><button onclick="CX.close()">Cancel</button><button id="askOk" class="'+(danger===false?'primary':'danger')+'">'+esc(label||'Delete')+'</button></div>','small');
+  $('#askOk',o).addEventListener('click',function(){closeSheet();fn()});
+}
+
+/* ================= navigation ================= */
+var page='home',search={};
+var NAV=[['home','home','Home'],['stock','box','Stock'],['bills','receipt','Bills'],['customers','users','Customers'],['staff','idcard','Staff'],['expenses','wallet','Expenses'],['reports','chart','Reports']];
+function go(p){page=p;closeAll();render();window.scrollTo(0,0)}
+function renderNav(){
+  $('#nav').innerHTML=NAV.map(function(n){return '<button class="'+(page===n[0]?'on':'')+'" onclick="CX.go(\''+n[0]+'\')">'+ic(n[1],21)+n[2]+'</button>'}).join('');
+}
+var FALLBACK_LOGO='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#7fc4ff"/><stop offset="1" stop-color="#1768d4"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="#061326"/><rect x="24" y="24" width="464" height="464" rx="96" fill="url(#g)" opacity=".18" stroke="#6fbaff" stroke-width="8"/><path d="M310 145a126 126 0 1 0 0 222" fill="none" stroke="#eaf5ff" stroke-width="48" stroke-linecap="round"/><path d="M328 164v184M328 256h112" fill="none" stroke="#4b9cff" stroke-width="42" stroke-linecap="round"/></svg>');
+function renderHeader(){
+  var s=data.settings;
+  $('#gname').textContent=(s.garageName||'').trim()||'Smart Garage Manager';
+  var m=$('#mark');
+  var src=s.garageLogo||'assets/carvox-logo.png';
+  m.innerHTML='<img alt="Logo">';
+  var im=$('img',m);
+  im.addEventListener('error',function(){im.onerror=null;im.src=FALLBACK_LOGO},{once:true});
+  im.src=src;
+  $('#hInfo').innerHTML=ic('info',20);
+  $('#hSet').innerHTML=ic('gear',20);
+}
+function render(){
+  try{applyLook()}catch(e){showErr('Appearance: '+(e&&e.message?e.message:e))}
+  // Keep the app shell usable even if a specific page has a rendering problem.
+  try{renderNav()}catch(e){showErr('Navigation: '+(e&&e.message?e.message:e))}
+  try{renderHeader()}catch(e){showErr('Header: '+(e&&e.message?e.message:e))}
+  try{
+    var v=VIEW[page]||VIEW.home;
+    if(typeof v!=='function')throw new Error('Page is not available: '+page);
+    $('#page').innerHTML=v();
+  }catch(e){
+    showErr('Page error: '+(e&&e.message?e.message:e));
+    $('#page').innerHTML='<div class="empty">This section could not be displayed. Your saved records have not been deleted. Open another tab or restart CarvoX.</div>';
+  }
+}
+function setSearch(name,v){
+  search[name]=v;
+  var el=$('#list-'+name);
+  if(el&&LISTS[name])el.innerHTML=LISTS[name]();
+}
+function searchBox(name,ph){return '<div class="search">'+ic('search',18)+'<input placeholder="'+esc(ph)+'" value="'+esc(search[name]||'')+'" oninput="CX.search(\''+name+'\',this.value)"></div>'}
+function q(name){return lc(search[name]||'')}
+function head(title,btnHtml){return '<div class="ph"><h2>'+title+'</h2>'+(btnHtml||'')+'</div>'}
+function addBtn(label,fn){return '<button class="primary sm" onclick="'+fn+'">'+ic('plus',16)+label+'</button>'}
+function empty(msg){return '<div class="empty">'+msg+'</div>'}
+
+/* ================= form engine ================= */
+var CATS=['ALIGNMENT','BALANCING','DENTING','PAINTING','REPAIRS','WASHING','ELECTRICAL WORK','AC WORK','OTHER'];
+var MODES=['Cash','UPI','Bank transfer','Card','Cheque','Other'];
+function F(k,l,t,o,x){return Object.assign({k:k,l:l,t:t||'text',o:o},x||{})}
+var SCHEMA={
+ customer:{title:'Customer',fields:[F('name','Customer name','text',0,{req:1,full:1}),F('phone','Phone / WhatsApp','tel'),F('vehicle','Vehicle model'),F('reg','Vehicle registration','text',0,{full:1}),F('notes','Notes','textarea',0,{full:1})]},
+ stock:{title:'Stock item',fields:[F('name','Part name','text',0,{req:1,full:1}),F('partNo','Part number'),F('qty','Quantity','number',0,{d:0}),F('minQty','Low-stock alert at (pcs)','number',0,{d:3}),F('buy','Purchase price','number',0,{d:0}),F('sell','Selling price','number',0,{d:0})]},
+ expense:{title:'Expense',fields:[F('title','Expense name (e.g. Rent, Oil)','text',0,{req:1,full:1}),F('amount','Amount (₹)','number',0,{req:1}),F('category','Category'),F('paidTo','Paid to / Vendor'),F('paymentMode','Payment mode','select',MODES),F('date','Date','date'),F('notes','Notes','textarea',0,{full:1})]},
+ staff:{title:'Staff member',fields:[F('name','Employee name','text',0,{req:1,full:1}),F('phone','Phone','tel'),F('role','Role / designation'),F('salary','Monthly salary (₹)','number',0,{d:0}),F('salaryStatus','Salary status','select',['Pending','Paid']),F('leaveTotal','Monthly leave allowance (days)','number',0,{d:0}),F('leaveUsed','Leaves taken (days)','number',0,{d:0}),F('joiningDate','Joining date','date',0,{d:''}),F('notes','Notes','textarea',0,{full:1})]},
+ attendance:{title:'Attendance',fields:[F('staffId','Staff member','ref:staff',0,{req:1,full:1}),F('date','Date','date'),F('status','Status','select',['Present','Absent','Leave','Half day']),F('note','Notes','textarea',0,{full:1})]},
+ supplier:{title:'Supplier',fields:[F('name','Supplier name','text',0,{req:1,full:1}),F('phone','Phone / WhatsApp','tel'),F('parts','Parts / speciality'),F('address','Address','text',0,{full:1}),F('notes','Notes','textarea',0,{full:1})]},
+ purchase:{title:'Stock purchase',fields:[F('partId','Stock item','ref:stock',0,{req:1,full:1}),F('supplierId','Supplier','ref:supplier',0,{full:1}),F('qty','Quantity purchased','number',0,{req:1}),F('unitCost','Price per unit (₹)','number'),F('date','Purchase date','date'),F('paid','Paid now (₹)','number'),F('paymentMode','Payment mode','select',MODES),F('addExpense','Also record as expense','checkbox',0,{full:1,d:true})]},
+ salary:{title:'Salary payment',fields:[F('staffId','Employee','ref:staff',0,{req:1,full:1}),F('month','Salary month','month'),F('amount','Amount paid (₹)','number',0,{req:1}),F('date','Payment date','date'),F('mode','Payment mode','select',MODES),F('notes','Notes','textarea',0,{full:1})]},
+ billpay:{title:'Receive payment',fields:[F('billId','Bill','ref:bill',0,{req:1,full:1}),F('amount','Amount received (₹)','number',0,{req:1}),F('date','Payment date','date'),F('mode','Payment mode','select',MODES),F('notes','Notes','textarea',0,{full:1})]}
+};
+function refOptions(t){
+  if(t==='ref:stock')return data.stock.map(function(x){return{v:x.id,l:(x.name||x.partNo||'Item')+' · '+num(x.qty)+' left'}});
+  if(t==='ref:staff')return data.staff.map(function(x){return{v:x.id,l:x.name||'Staff'}});
+  if(t==='ref:supplier')return data.suppliers.map(function(x){return{v:x.id,l:x.name||'Supplier'}});
+  if(t==='ref:bill')return data.bills.map(function(x){return{v:x.id,l:(x.billNo||'Bill')+' · '+(x.customer||'')+' · due '+money(x.balance)}});
+  return [];
+}
+function fieldHTML(f,v){
+  var h='<div class="'+(f.full?'full':'')+'"><label>'+esc(f.l)+(f.req?' *':'')+'</label>';
+  if(f.t==='select'){
+    h+='<select name="'+f.k+'">'+f.o.map(function(o){return '<option'+(o===v?' selected':'')+'>'+esc(o)+'</option>'}).join('')+'</select>';
+  }else if(f.t.indexOf('ref:')===0){
+    h+='<select name="'+f.k+'"><option value="">Choose…</option>'+refOptions(f.t).map(function(o){return '<option value="'+esc(o.v)+'"'+(o.v===v?' selected':'')+'>'+esc(o.l)+'</option>'}).join('')+'</select>';
+  }else if(f.t==='textarea'){
+    h+='<textarea name="'+f.k+'" rows="3">'+esc(v)+'</textarea>';
+  }else if(f.t==='checkbox'){
+    h+='<input type="checkbox" name="'+f.k+'"'+(v?' checked':'')+'>';
+  }else{
+    h+='<input name="'+f.k+'" type="'+f.t+'" value="'+esc(v)+'"'+(f.t==='number'?' step="any" inputmode="decimal" min="0"':'')+'>';
+  }
+  return h+'</div>';
+}
+function openForm(type,id,pre){
+  var sc=SCHEMA[type],arr=data[KEYMAP[type]],old=id?(byId(arr,id)||{}):{};
+  var vals=Object.assign({},pre||{},old);
+  var h=sheetHead((id?'Edit ':'Add ')+sc.title)+'<form id="gf" autocomplete="off"><div class="fg">';
+  sc.fields.forEach(function(f){
+    var v=vals[f.k];
+    if(v==null){
+      if(f.t==='date')v=today();else if(f.t==='month')v=today().slice(0,7);
+      else v=f.d!=null?f.d:'';
+    }
+    h+=fieldHTML(f,v);
+  });
+  h+='</div><div class="actions"><button type="button" onclick="CX.close()">Cancel</button><button type="submit" class="primary">Save</button></div></form>';
+  var o=openSheet(h);
+  $('#gf',o).addEventListener('submit',function(e){
+    e.preventDefault();
+    var out={};
+    for(var i=0;i<sc.fields.length;i++){
+      var f=sc.fields[i],el=this.elements[f.k];
+      if(f.t==='checkbox'){out[f.k]=el.checked;continue}
+      var v=String(el.value).trim();
+      if(f.req&&!v){toast(f.l+' is required');el.focus();return}
+      out[f.k]=f.t==='number'?num(v):v;
+    }
+    saveRecord(type,id,out);
+  });
+}
+function upsert(type,id,obj){
+  var arr=data[KEYMAP[type]];
+  if(id){var i=arr.findIndex(function(x){return x.id===id});if(i>=0){arr[i]=Object.assign({},arr[i],obj);return arr[i]}}
+  var rec=Object.assign({id:uid(),createdAt:new Date().toISOString()},obj);arr.unshift(rec);return rec;
+}
+function saveRecord(type,id,o){
+  if(type==='attendance'){
+    var st=byId(data.staff,o.staffId);o.staffName=st?st.name:'Staff member';
+    if(!o.date)o.date=today();
+    if(!id){var ex=data.attendance.find(function(x){return x.staffId===o.staffId&&x.date===o.date});if(ex)id=ex.id}
+  }
+  if(type==='purchase'){
+    var s=byId(data.stock,o.partId);
+    if(!s){toast('Select a stock item');return}
+    if(o.qty<=0){toast('Enter purchase quantity');return}
+    if(!o.unitCost)o.unitCost=num(s.buy);
+    s.qty=num(s.qty)+o.qty;s.buy=o.unitCost;
+    var sup=byId(data.suppliers,o.supplierId);
+    var rec=upsert('purchase',null,o);
+    if(o.addExpense){
+      data.expenses.unshift({id:uid(),createdAt:new Date().toISOString(),title:'Stock purchase: '+(s.name||s.partNo||'item'),category:'Stock purchase',paidTo:sup?sup.name:'',amount:o.paid?o.paid:o.qty*o.unitCost,date:o.date||today(),paymentMode:o.paymentMode||'Cash',notes:'Auto-created from stock purchase',purchaseId:rec.id});
+    }
+    closeSheet();persist();toast('Purchase recorded');return;
+  }
+  if(type==='salary'){
+    var e=byId(data.staff,o.staffId);o.staffName=e?e.name:'Employee';
+    var r2=upsert('salary',null,o);
+    data.expenses.unshift({id:uid(),createdAt:new Date().toISOString(),title:'Salary payment: '+o.staffName,category:'Staff salary',paidTo:o.staffName,amount:o.amount,date:o.date||today(),paymentMode:o.mode||'Cash',notes:'Auto-created from salary payment',salaryId:r2.id});
+    if(e){e.salaryStatus='Paid'}
+    closeSheet();persist();toast('Salary recorded');return;
+  }
+  if(type==='billpay'){
+    var b=byId(data.bills,o.billId);
+    if(!b){toast('Select a bill');return}
+    if(o.amount<=0){toast('Enter an amount');return}
+    b.paid=num(b.paid)+o.amount;
+    b.balance=Math.max(0,num(b.balance)-o.amount);
+    if(o.mode)b.paymentMode=o.mode;
+    o.billNo=b.billNo||'';o.customer=b.customer||'';
+    upsert('billpay',null,o);
+    closeSheet();persist();toast('Payment received');return;
+  }
+  upsert(type,id,o);
+  closeSheet();persist();toast('Saved');
+}
+function removeRecord(type,id){
+  ask('Delete this record? This cannot be undone.','Delete',function(){
+    var k=KEYMAP[type],arr=data[k];
+    if(type==='bill'){
+      var b=byId(data.bills,id);
+      if(b){(b.items||[]).forEach(function(it){var s=byId(data.stock,it.stockId);if(s)s.qty=num(s.qty)+num(it.qty)})}
+      data.billPayments=data.billPayments.filter(function(p){return p.billId!==id});
+    }
+    if(type==='billpay'){
+      var p=byId(data.billPayments,id),bb=p&&byId(data.bills,p.billId);
+      if(bb){bb.paid=Math.max(0,num(bb.paid)-num(p.amount));bb.balance=num(bb.balance)+num(p.amount)}
+    }
+    if(type==='purchase'){
+      var pu=byId(data.purchases,id),ss=pu&&byId(data.stock,pu.partId);
+      if(ss)ss.qty=Math.max(0,num(ss.qty)-num(pu.qty));
+      data.expenses=data.expenses.filter(function(x){return x.purchaseId!==id});
+    }
+    if(type==='salary'){data.expenses=data.expenses.filter(function(x){return x.salaryId!==id})}
+    if(type==='staff'){data.attendance=data.attendance.filter(function(a){return a.staffId!==id})}
+    data[k]=arr.filter(function(x){return x.id!==id});
+    closeAll();persist();toast('Deleted');
+  });
+}
+
+/* ================= bills ================= */
+var parts=[],customs=[],billEditId=null;
+function nextBillNo(){
+  var last=data.bills.length?data.bills[0].billNo:'';
+  var m=/^(.*?)(\d+)$/.exec(String(last||''));
+  if(m){var n=String(parseInt(m[2],10)+1);return m[1]+n.padStart(m[2].length,'0')}
+  return 'CX-'+String(data.bills.length+1).padStart(4,'0');
+}
+function partsTotal(){return parts.reduce(function(a,i){return a+num(i.qty)*num(i.price)},0)}
+function customsTotal(){return customs.reduce(function(a,i){return a+num(i.qty||1)*num(i.price)},0)}
+function recalcBill(setAmount){
+  var sc=num(($('#b_serviceCharge')||{}).value);
+  var total=partsTotal()+customsTotal()+sc;
+  if(setAmount&&$('#b_amount'))$('#b_amount').value=total.toFixed(2);
+  var amt=num(($('#b_amount')||{}).value),paid=num(($('#b_paid')||{}).value);
+  var d=$('#b_due');if(d)d.textContent=money(Math.max(0,amt-paid));
+}
+function renderBillLists(){
+  var pl=$('#b_parts');
+  if(pl)pl.innerHTML=parts.length?parts.map(function(it,i){return '<div class="pr"><div class="d"><div class="t" style="font-size:.9rem">'+esc(it.name)+'</div><div class="m">'+it.qty+' × '+money(it.price)+' = '+money(it.qty*it.price)+'</div></div><button type="button" class="x danger" onclick="CX.rmPart('+i+')">'+ic('x',16)+'</button></div>'}).join(''):'<div class="note">No stock items added.</div>';
+  var cl=$('#b_customs');
+  if(cl)cl.innerHTML=customs.length?customs.map(function(it,i){return '<div class="pr"><div class="d"><div class="t" style="font-size:.9rem">'+esc(it.name)+'</div><div class="m">'+it.qty+' × '+money(it.price)+' = '+money(it.qty*it.price)+'</div></div><button type="button" class="x danger" onclick="CX.rmCustom('+i+')">'+ic('x',16)+'</button></div>'}).join(''):'<div class="note">No custom items added.</div>';
+  recalcBill(true);
+}
+function openBill(id,pre){
+  billEditId=id||null;
+  var old=id?(byId(data.bills,id)||{}):{};
+  pre=pre||{};
+  parts=Array.isArray(old.items)?old.items.map(function(x){return Object.assign({},x)}):[];
+  customs=Array.isArray(old.customItems)?old.customItems.map(function(x){return Object.assign({},x)}):[];
+  var v=function(k,d){return old[k]!=null?old[k]:(pre[k]!=null?pre[k]:(d!=null?d:''))};
+  var svc=old.serviceCharge!==undefined?old.serviceCharge:((id&&!parts.length&&!customs.length)?num(old.amount):0);
+  var custOpts='<option value="">Pick a saved customer (optional)</option>'+data.customers.map(function(c){return '<option value="'+c.id+'">'+esc(c.name||'Customer')+(c.vehicle?' · '+esc(c.vehicle):'')+'</option>'}).join('');
+  var stockOpts='<option value="">Choose item from stock</option>'+data.stock.map(function(s){return '<option value="'+s.id+'">'+esc(s.name||s.partNo||'Part')+' · '+num(s.qty)+' left · '+money(s.sell)+'</option>'}).join('');
+  var h=sheetHead(id?'Edit bill':'New bill')+'<form id="bf" autocomplete="off">'+
+   '<label>Saved customer</label><select id="b_cust">'+custOpts+'</select>'+
+   '<div class="fg"><div><label>Bill number</label><input id="b_billNo" value="'+esc(v('billNo',nextBillNo()))+'"></div><div><label>Date</label><input id="b_date" type="date" value="'+esc(v('date',today()))+'"></div>'+
+   '<div class="full"><label>Customer name</label><input id="b_customer" value="'+esc(v('customer'))+'"></div>'+
+   '<div><label>Phone</label><input id="b_phone" type="tel" value="'+esc(v('phone'))+'"></div><div><label>Vehicle</label><input id="b_vehicle" value="'+esc(v('vehicle'))+'"></div>'+
+   '<div class="full"><label>Registration number</label><input id="b_reg" value="'+esc(v('reg'))+'"></div>'+
+   '<div class="full"><label>Service category</label><select id="b_category"><option value="">Choose…</option>'+CATS.map(function(c){return '<option'+(v('category')===c?' selected':'')+'>'+c+'</option>'}).join('')+'</select></div>'+
+   '<div class="full"><label>Service / labour details</label><textarea id="b_description" rows="2">'+esc(v('description'))+'</textarea></div>'+
+   '<div class="full"><label>Service / labour charge (₹)</label><input id="b_serviceCharge" type="number" step="any" inputmode="decimal" min="0" value="'+esc(svc)+'"></div></div>'+
+   '<h3>Stock parts used</h3><div class="sel"><select id="b_stock">'+stockOpts+'</select><input id="b_sqty" type="number" min="1" value="1" style="width:76px"><button type="button" class="primary sm" onclick="CX.addPart()">Add</button></div>'+
+   '<div class="note">Stock reduces automatically when the bill is saved.</div><div id="b_parts"></div>'+
+   '<h3>Custom items (not from stock)</h3><div class="sel"><input id="b_cname" placeholder="Item name" style="flex:2"><input id="b_cprice" type="number" step="any" min="0" placeholder="₹" style="width:80px"><input id="b_cqty" type="number" min="1" value="1" style="width:64px"></div>'+
+   '<button type="button" class="sm full" style="margin-top:8px" onclick="CX.addCustom()">'+ic('plus',16)+'Add custom item</button><div id="b_customs"></div>'+
+   '<h3>Payment</h3><div class="fg"><div><label>Bill total (₹)</label><input id="b_amount" type="number" step="any" inputmode="decimal" min="0" value="'+esc(old.amount!=null?old.amount:'')+'"></div>'+
+   '<div><label>Amount received (₹)</label><input id="b_paid" type="number" step="any" inputmode="decimal" min="0" value="'+esc(v('paid',0))+'"></div>'+
+   '<div><label>Payment mode</label><select id="b_mode">'+MODES.map(function(m){return '<option'+(v('paymentMode','Cash')===m?' selected':'')+'>'+m+'</option>'}).join('')+'</select></div>'+
+   '<div><label>Due amount</label><div class="card" style="padding:11px 12px;font-weight:800" id="b_due">'+money(0)+'</div></div>'+
+   '<div class="full"><label>Profit (₹) — your own figure</label><div class="sel"><input id="b_profit" type="number" step="any" inputmode="decimal" value="'+esc(v('profit',0))+'"><button type="button" class="sm" onclick="CX.estProfit()">Estimate</button></div>'+
+   '<div class="note">Estimate = labour charge + (selling − buying price) of stock parts. Custom item cost is unknown, so adjust if needed.</div></div></div>'+
+   '<div class="actions"><button type="button" onclick="CX.close()">Cancel</button><button type="submit" class="primary">Save bill</button></div></form>';
+  var o=openSheet(h);
+  renderBillLists();
+  if(id&&old.amount!=null)$('#b_amount').value=num(old.amount);
+  recalcBill(false);
+  $('#b_serviceCharge',o).addEventListener('input',function(){recalcBill(true)});
+  $('#b_amount',o).addEventListener('input',function(){recalcBill(false)});
+  $('#b_paid',o).addEventListener('input',function(){recalcBill(false)});
+  $('#b_cust',o).addEventListener('change',function(){
+    var c=byId(data.customers,this.value);if(!c)return;
+    $('#b_customer').value=c.name||'';$('#b_phone').value=c.phone||'';$('#b_vehicle').value=c.vehicle||'';$('#b_reg').value=c.reg||'';
+  });
+  $('#bf',o).addEventListener('submit',function(e){e.preventDefault();saveBill()});
+}
+function addPart(){
+  var id=$('#b_stock').value,qty=Math.floor(num($('#b_sqty').value));
+  var s=byId(data.stock,id);
+  if(!s){toast('Choose a stock item');return}
+  if(qty<1){toast('Quantity must be at least 1');return}
+  var ex=parts.find(function(p){return p.stockId===id});
+  if(ex)ex.qty+=qty;else parts.push({stockId:id,name:s.name||s.partNo||'Stock item',partNo:s.partNo||'',qty:qty,price:num(s.sell)});
+  $('#b_stock').value='';$('#b_sqty').value=1;renderBillLists();
+}
+function addCustom(){
+  var name=$('#b_cname').value.trim(),price=num($('#b_cprice').value),qty=Math.max(1,Math.floor(num($('#b_cqty').value)||1));
+  if(!name){toast('Enter item name');return}
+  customs.push({name:name,price:price,qty:qty});
+  $('#b_cname').value='';$('#b_cprice').value='';$('#b_cqty').value=1;renderBillLists();
+}
+function estProfit(){
+  var m=parts.reduce(function(a,p){var s=byId(data.stock,p.stockId);return a+(num(p.price)-(s?num(s.buy):0))*num(p.qty)},0);
+  $('#b_profit').value=(num($('#b_serviceCharge').value)+m).toFixed(2);
+}
+function stockDelta(oldItems,newItems){
+  var delta={};
+  (oldItems||[]).forEach(function(it){delta[it.stockId]=(delta[it.stockId]||0)+num(it.qty)});
+  (newItems||[]).forEach(function(it){delta[it.stockId]=(delta[it.stockId]||0)-num(it.qty)});
+  for(var id in delta){var s=byId(data.stock,id);if(s&&num(s.qty)+delta[id]<0)return{ok:false,name:s.name||s.partNo,avail:num(s.qty)}}
+  return{ok:true,delta:delta};
+}
+function saveBill(){
+  var old=billEditId?byId(data.bills,billEditId):null;
+  var obj={
+    billNo:$('#b_billNo').value.trim(),date:$('#b_date').value||today(),
+    customer:$('#b_customer').value.trim(),phone:$('#b_phone').value.trim(),vehicle:$('#b_vehicle').value.trim(),reg:$('#b_reg').value.trim(),
+    category:$('#b_category').value,description:$('#b_description').value.trim(),
+    serviceCharge:num($('#b_serviceCharge').value),items:parts.map(function(x){return Object.assign({},x)}),customItems:customs.map(function(x){return Object.assign({},x)}),
+    paymentMode:$('#b_mode').value,profit:num($('#b_profit').value)
+  };
+  var calc=partsTotal()+customsTotal()+obj.serviceCharge;
+  obj.amount=$('#b_amount').value===''?calc:num($('#b_amount').value);
+  obj.paid=num($('#b_paid').value);
+  obj.balance=Math.max(0,obj.amount-obj.paid);
+  if(!obj.customer&&!obj.vehicle&&!obj.amount){toast('Add a customer or some amount');return}
+  var chk=stockDelta(old?old.items:[],obj.items);
+  if(!chk.ok){toast('Not enough stock for '+chk.name+' (only '+chk.avail+')');return}
+  for(var id in chk.delta){var s=byId(data.stock,id);if(s)s.qty=num(s.qty)+chk.delta[id]}
+  var rec=upsert('bill',billEditId,obj);
+  closeAll();persist();toast('Bill saved');
+  setTimeout(function(){viewBill(rec.id)},60);
+}
+function billItems(b){return (b.items||[]).concat(b.customItems||[])}
+function billStatus(b){var due=num(b.balance);return due<=0?['Paid','ok']:(num(b.paid)>0?['Partial','warn']:['Unpaid','bad'])}
+function waNumber(p){var d=String(p||'').replace(/\D/g,'');if(d.length===10)d='91'+d;return d}
+function invoiceText(b){
+  var s=data.settings,t=(s.garageName||'CarvoX')+'\n'+(s.garagePhone?'Ph: '+s.garagePhone+'\n':'')+(s.garageAddress?s.garageAddress+'\n':'')+'\n';
+  t+='Invoice: '+(b.billNo||'-')+'\nDate: '+(b.date||'')+'\nCustomer: '+(b.customer||'-')+(b.vehicle?'\nVehicle: '+b.vehicle+(b.reg?' ('+b.reg+')':''):'')+'\n';
+  if(b.category)t+='Service: '+b.category+'\n';
+  t+='\n';
+  if(num(b.serviceCharge))t+='Labour/service: '+money(b.serviceCharge)+'\n';
+  billItems(b).forEach(function(i){t+=(i.name||'Item')+' x'+num(i.qty||1)+' = '+money(num(i.qty||1)*num(i.price))+'\n'});
+  t+='\nTotal: '+money(b.amount)+'\nReceived: '+money(b.paid)+'\nDue: '+money(b.balance)+'\n\nThank you for choosing '+(s.garageName||'us')+'!';
+  return t;
+}
+function invoiceHTML(b){
+  var s=data.settings,st=billStatus(b),logo=s.garageLogo||'assets/carvox-logo.png';
+  var rows='';
+  if(num(b.serviceCharge))rows+='<tr><td>Labour / service</td><td>1</td><td>'+money(b.serviceCharge)+'</td></tr>';
+  billItems(b).forEach(function(i){rows+='<tr><td>'+esc(i.name||'Item')+'</td><td>'+num(i.qty||1)+'</td><td>'+money(num(i.qty||1)*num(i.price))+'</td></tr>'});
+  return '<div class="paper"><div class="ph2"><img src="'+esc(logo)+'" alt="" onerror="this.onerror=null;this.src=\''+FALLBACK_LOGO.replace(/'/g,'%27')+'\'"><div><h1>'+esc(s.garageName||'CarvoX')+'</h1><div style="color:#506384;font-size:.78rem">'+esc([s.garagePhone,s.garageAddress].filter(Boolean).join(' · ')||'Garage service invoice')+'</div></div></div>'+
+   '<div class="row sb"><div><b>Invoice</b> '+esc(b.billNo||'-')+'<br><span style="color:#506384">'+esc(b.date||'')+'</span></div><span class="stamp '+st[1]+'">'+st[0].toUpperCase()+'</span></div>'+
+   '<div style="margin-top:10px"><b>'+esc(b.customer||'Customer')+'</b>'+(b.phone?' · '+esc(b.phone):'')+'<br><span style="color:#506384">'+esc([b.vehicle,b.reg].filter(Boolean).join(' · '))+'</span></div>'+
+   (b.category||b.description?'<div style="margin-top:8px;color:#506384">'+esc([b.category,b.description].filter(Boolean).join(' — '))+'</div>':'')+
+   (rows?'<table><tr><th>Item</th><th>Qty</th><th>Amount</th></tr>'+rows+'</table>':'')+
+   '<div class="tot big"><span>Total</span><span>'+money(b.amount)+'</span></div><div class="tot"><span>Received ('+esc(b.paymentMode||'-')+')</span><span>'+money(b.paid)+'</span></div><div class="tot"><span>Due</span><span>'+money(b.balance)+'</span></div>'+
+   '<div class="foot">Thank you for choosing '+esc(s.garageName||'us')+'!</div></div>';
+}
+function viewBill(id){
+  var b=byId(data.bills,id);if(!b)return;
+  var st=billStatus(b);
+  var pays=data.billPayments.filter(function(p){return p.billId===id});
+  var h=sheetHead(esc(b.billNo||'Bill')+' <span class="chip '+st[1]+'">'+st[0]+'</span>')+invoiceHTML(b)+
+   (pays.length?'<h3>Payments received later</h3><div class="list">'+pays.map(function(p){return '<div class="lg"><span>'+esc(p.date||'')+' · '+esc(p.mode||'')+'</span><span><b>'+money(p.amount)+'</b> <button class="xbtn danger" style="width:30px;height:30px;vertical-align:middle" onclick="CX.del(\'billpay\',\''+p.id+'\')">'+ic('trash',14)+'</button></span></div>'}).join('')+'</div>':'')+
+   '<div class="actions">'+
+   (num(b.balance)>0?'<button class="primary" onclick="CX.payBill(\''+id+'\')">'+ic('rupee',18)+'Receive payment</button>':'')+
+   '<button onclick="CX.shareBill(\''+id+'\')">'+ic('share',18)+'Share image</button>'+
+   '<button onclick="CX.printBill(\''+id+'\')">'+ic('print',18)+'Print</button>'+
+   '<button onclick="CX.editBill(\''+id+'\')">'+ic('edit',18)+'Edit</button>'+
+   '<button class="danger" onclick="CX.del(\'bill\',\''+id+'\')">'+ic('trash',18)+'Delete</button></div>';
+  openSheet(h);
+}
+function payBill(id){
+  var b=byId(data.bills,id);
+  closeSheet();
+  setTimeout(function(){openForm('billpay',null,{billId:id,amount:num(b&&b.balance)})},80);
+}
+function editBill(id){closeSheet();setTimeout(function(){openBill(id)},80)}
+function waBill(id){
+  var b=byId(data.bills,id);if(!b)return;
+  var url='https://wa.me/'+waNumber(b.phone)+'?text='+encodeURIComponent(invoiceText(b));
+  try{window.open(url,'_blank')}catch(e){shareText(invoiceText(b),'Invoice')}
+}
+function canvasRoundRect(ctx,x,y,w,h,r,fill,stroke){
+  r=Math.min(r,w/2,h/2);
+  ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();
+  if(fill){ctx.fillStyle=fill;ctx.fill()}
+  if(stroke){ctx.strokeStyle=stroke;ctx.stroke()}
+}
+function canvasWrap(ctx,text,x,y,maxWidth,lineHeight,font,color){
+  ctx.font=font;ctx.fillStyle=color||'#0b1b36';
+  var paragraphs=String(text==null?'':text).split('\n');
+  paragraphs.forEach(function(paragraph,pi){
+    var words=paragraph.split(/\s+/),line='';
+    if(!paragraph){y+=lineHeight;return}
+    words.forEach(function(word){
+      var test=line?line+' '+word:word;
+      if(line&&ctx.measureText(test).width>maxWidth){ctx.fillText(line,x,y);y+=lineHeight;line=word}
+      else line=test;
+    });
+    if(line){ctx.fillText(line,x,y);y+=lineHeight}
+    if(pi<paragraphs.length-1)y+=2;
+  });
+  return y;
+}
+function loadInvoiceLogo(src){
+  return new Promise(function(resolve){
+    var img=new Image(),finished=false,timer=setTimeout(function(){if(!finished){finished=true;resolve(null)}},2200);
+    img.onload=function(){if(finished)return;finished=true;clearTimeout(timer);resolve(img)};
+    img.onerror=function(){if(finished)return;finished=true;clearTimeout(timer);resolve(null)};
+    img.src=src||FALLBACK_LOGO;
+  });
+}
+async function renderInvoiceCanvas(b){
+  var W=1200,P=64,RIGHT=W-P,items=[];
+  if(num(b.serviceCharge))items.push({name:'Labour / service',qty:1,amount:num(b.serviceCharge)});
+  billItems(b).forEach(function(it){items.push({name:it.name||'Item',qty:num(it.qty||1),amount:num(it.qty||1)*num(it.price)})});
+  var canvas=document.createElement('canvas');canvas.width=W;canvas.height=Math.max(1500,1450+items.length*82);
+  var c=canvas.getContext('2d');if(!c)throw new Error('Canvas is not available on this device');
+  c.fillStyle='#ffffff';c.fillRect(0,0,W,canvas.height);
+  canvasRoundRect(c,18,18,W-36,canvas.height-36,30,'#ffffff','#e5edf8');
+  var logoSrc=data.settings.garageLogo||'assets/carvox-logo.png';
+  var logo=await loadInvoiceLogo(logoSrc);
+  var x=P,y=72;
+  canvasRoundRect(c,x,y,142,142,22,'#071a37','#d7e8ff');
+  if(logo){
+    c.save();c.beginPath();c.moveTo(x+26,y+8);c.arcTo(x+134,y+8,x+134,y+26,18);c.arcTo(x+134,y+134,x+116,y+134,18);c.arcTo(x+8,y+134,x+8,y+116,18);c.arcTo(x+8,y+8,x+26,y+8,18);c.closePath();c.clip();
+    var scale=Math.min(126/logo.width,126/logo.height),dw=logo.width*scale,dh=logo.height*scale;
+    c.drawImage(logo,x+8+(126-dw)/2,y+8+(126-dh)/2,dw,dh);c.restore();
+  }else{
+    var grad=c.createLinearGradient(x,y,x+142,y+142);grad.addColorStop(0,'#3d9cff');grad.addColorStop(1,'#061a3a');
+    canvasRoundRect(c,x+8,y+8,126,126,18,grad);
+    c.fillStyle='#ffffff';c.font='bold 27px Arial';c.textAlign='center';c.fillText('CARVOX',x+71,y+80);c.textAlign='left';
+  }
+  var brandX=x+172;
+  c.fillStyle='#0b1b36';c.font='bold 43px Arial';
+  c.fillText(String(data.settings.garageName||'CarvoX'),brandX,y+62,RIGHT-brandX);
+  c.fillStyle='#52627c';c.font='27px Arial';
+  var contact=[data.settings.garagePhone,data.settings.garageAddress].filter(Boolean).join(' · ')||'Garage service invoice';
+  var hy=canvasWrap(c,contact,brandX,y+105,RIGHT-brandX,34,'27px Arial','#52627c');
+  y=Math.max(y+170,hy+28);
+  c.fillStyle='#1f78f0';c.fillRect(P,y, W-2*P,5);y+=54;
+
+  c.fillStyle='#0b1b36';c.font='bold 34px Arial';c.fillText('INVOICE  '+String(b.billNo||'-'),P,y+35);
+  c.fillStyle='#52627c';c.font='27px Arial';c.textAlign='right';c.fillText(String(b.date||''),RIGHT,y+33);c.textAlign='left';
+  var status=billStatus(b)[0].toUpperCase(),statusColor=status==='PAID'?'#159875':status==='PARTIAL'?'#bd7a00':'#cc405b';
+  c.save();c.translate(RIGHT-4,y+100);c.rotate(-0.07);c.lineWidth=5;c.strokeStyle=statusColor;c.fillStyle=statusColor;c.font='bold 27px Arial';
+  var sw=Math.max(150,c.measureText(status).width+48);c.strokeRect(-sw,-31,sw,62);c.textAlign='center';c.fillText(status,-sw/2,10);c.restore();
+  y+=95;
+
+  c.fillStyle='#0b1b36';c.font='bold 34px Arial';
+  c.fillText(String(b.customer||'Customer'),P,y+30,760);y+=46;
+  c.fillStyle='#52627c';c.font='26px Arial';
+  var details=[b.phone,b.vehicle,b.reg].filter(Boolean).join(' · ');
+  if(details)y=canvasWrap(c,details,P,y+4,W-2*P,34,'26px Arial','#52627c')+12;
+  if(b.category||b.description){
+    y=canvasWrap(c,[b.category,b.description].filter(Boolean).join(' — '),P,y+2,W-2*P,35,'25px Arial','#52627c')+12;
+  }
+
+  if(items.length){
+    c.fillStyle='#0b1b36';c.font='bold 25px Arial';c.fillText('ITEM',P,y+30);c.textAlign='center';c.fillText('QTY',820,y+30);c.textAlign='right';c.fillText('AMOUNT',RIGHT,y+30);c.textAlign='left';
+    y+=48;c.fillStyle='#dfe8f4';c.fillRect(P,y,W-2*P,2);y+=10;
+    items.forEach(function(it){
+      c.fillStyle='#172942';c.font='25px Arial';var nameY=canvasWrap(c,it.name,P,y+30,650,31,'25px Arial','#172942');
+      c.textAlign='center';c.fillText(String(it.qty),820,y+30);c.textAlign='right';c.font='bold 25px Arial';c.fillText(money(it.amount),RIGHT,y+30);c.textAlign='left';
+      var rowBottom=Math.max(y+62,nameY+4);c.fillStyle='#e3eaf6';c.fillRect(P,rowBottom,W-2*P,2);y=rowBottom+12;
+    });
+  }
+  y+=18;c.fillStyle='#0b1b36';c.fillRect(P,y,W-2*P,4);y+=48;
+  c.fillStyle='#0b1b36';c.font='bold 34px Arial';c.fillText('Total',P,y+8);
+  c.textAlign='right';c.fillText(money(b.amount),RIGHT,y+8);c.textAlign='left';y+=62;
+  c.fillStyle='#172942';c.font='27px Arial';c.fillText('Received ('+String(b.paymentMode||'-')+')',P,y+6);
+  c.textAlign='right';c.fillText(money(b.paid),RIGHT,y+6);c.textAlign='left';y+=52;
+  c.fillText('Due',P,y+6);c.textAlign='right';c.fillText(money(b.balance),RIGHT,y+6);c.textAlign='left';y+=74;
+  c.fillStyle='#52627c';c.font='25px Arial';c.textAlign='center';c.fillText('Thank you for choosing '+String(data.settings.garageName||'us')+'!',W/2,y);c.textAlign='left';y+=76;
+
+  var finalCanvas=document.createElement('canvas');finalCanvas.width=W;finalCanvas.height=Math.min(canvas.height,y);
+  var fc=finalCanvas.getContext('2d');fc.drawImage(canvas,0,0,W,finalCanvas.height,0,0,W,finalCanvas.height);
+  return finalCanvas;
+}
+function canvasToBlob(canvas){
+  return new Promise(function(resolve,reject){
+    if(canvas.toBlob){canvas.toBlob(function(blob){if(blob)resolve(blob);else reject(new Error('Could not create PNG image'))},'image/png');return}
+    try{
+      var dataUrl=canvas.toDataURL('image/png'),parts=dataUrl.split(','),raw=atob(parts[1]),bytes=new Uint8Array(raw.length);
+      for(var i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+      resolve(new Blob([bytes],{type:'image/png'}));
+    }catch(e){reject(e)}
+  });
+}
+function blobToBase64(blob){
+  return new Promise(function(resolve,reject){
+    var reader=new FileReader();reader.onload=function(){resolve(String(reader.result).split(',')[1]||'')};reader.onerror=function(){reject(new Error('Could not prepare image for sharing'))};reader.readAsDataURL(blob);
+  });
+}
+async function shareBill(id){
+  var b=byId(data.bills,id);if(!b)return;
+  try{
+    toast('Preparing invoice image…');
+    var canvas=await renderInvoiceCanvas(b),blob=await canvasToBlob(canvas);
+    var fileName='CarvoX-'+String(b.billNo||'Invoice').replace(/[^a-z0-9_-]/gi,'_')+'.png';
+    var cap=window.Capacitor;
+    if(cap&&cap.isNativePlatform&&cap.isNativePlatform()){
+      var fs=nativePlugin('Filesystem'),sh=nativePlugin('Share');
+      if(fs&&sh){
+        var base64=await blobToBase64(blob);
+        var saved=await fs.writeFile({path:fileName,data:base64,directory:'CACHE',encoding:'base64'});
+        await sh.share({title:'CarvoX Invoice '+(b.billNo||''),url:saved.uri,dialogTitle:'Share invoice image'});
+        return;
+      }
+    }
+    if(typeof File!=='undefined'&&navigator.share&&navigator.canShare){
+      var file=new File([blob],fileName,{type:'image/png'});
+      if(navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'CarvoX Invoice '+(b.billNo||'')});return}
+    }
+    var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=fileName;a.style.display='none';document.body.appendChild(a);a.click();
+    setTimeout(function(){URL.revokeObjectURL(url);a.remove()},4000);toast('Invoice PNG saved to Downloads.');
+  }catch(e){console.error(e);toast('Image sharing failed: '+(e&&e.message?e.message:'Please try again.'))}
+}
+function printBill(id){
+  var b=byId(data.bills,id);if(!b)return;
+  var pa=$('#printArea');
+  pa.innerHTML=invoiceHTML(b);
+  document.body.classList.add('printing');
+  var cleaned=false;
+  var done=function(){if(cleaned)return;cleaned=true;document.body.classList.remove('printing');pa.innerHTML='';window.removeEventListener('afterprint',done)};
+  window.addEventListener('afterprint',done,{once:true});
+  var images=Array.prototype.slice.call(pa.querySelectorAll('img'));
+  Promise.all(images.map(function(img){
+    if(img.complete)return Promise.resolve();
+    return new Promise(function(resolve){img.onload=resolve;img.onerror=resolve;setTimeout(resolve,2500)});
+  })).then(function(){
+    setTimeout(function(){
+      try{window.focus();window.print()}
+      catch(e){done();toast('Print is not available in this Android view. Open CarvoX in Chrome and use Print.')}
+    },220);
+  });
+  // Safety cleanup only if the Android WebView does not send afterprint.
+  setTimeout(done,60000);
+}
+
+/* ================= native share / backup ================= */
+var NP={};
+function nativePlugin(name){
+  var c=window.Capacitor;
+  if(!c||!c.isNativePlatform||!c.isNativePlatform())return null;
+  if(NP[name])return NP[name];
+  try{NP[name]=(c.Plugins&&c.Plugins[name])||c.registerPlugin(name)}catch(e){NP[name]=null}
+  return NP[name];
+}
+function copyText(t,msg){
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(function(){toast(msg||'Copied')},function(){toast('Copy failed')});return}
+  var ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();
+  try{document.execCommand('copy');toast(msg||'Copied')}catch(e){toast('Copy failed')}ta.remove();
+}
+function shareText(text,title){
+  var sh=nativePlugin('Share');
+  if(sh){sh.share({title:title||'CarvoX',text:text,dialogTitle:'Share'}).catch(function(){});return}
+  if(navigator.share){navigator.share({title:title||'CarvoX',text:text}).catch(function(){});return}
+  copyText(text,'Copied to clipboard');
+}
+function backupJSON(){return JSON.stringify(Object.assign({},data,{_backupInfo:{app:'CarvoX',version:VERSION,exportedAt:new Date().toISOString()}}),null,2)}
+async function exportBackup(){
+  var json=backupJSON(),name='carvox-backup-'+today()+'.json';
+  try{
+    var fs=nativePlugin('Filesystem'),sh=nativePlugin('Share');
+    if(fs&&sh){
+      var r=await fs.writeFile({path:name,data:json,directory:'CACHE',encoding:'utf8'});
+      await sh.share({title:'CarvoX backup',url:r.uri,dialogTitle:'Save or send your backup'});
+      return;
+    }
+  }catch(e){}
+  try{
+    var blob=new Blob([json],{type:'application/json'});
+    if(typeof File!=='undefined'&&navigator.canShare){
+      var file=new File([blob],name,{type:'application/json'});
+      if(navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'CarvoX backup'});return}
+    }
+    var url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.style.display='none';document.body.appendChild(a);a.click();
+    setTimeout(function(){URL.revokeObjectURL(url);a.remove()},2000);
+    toast('Backup file created');
+  }catch(e){copyText(json,'Backup copied — paste it in Notes')}
+}
+function importFromText(txt){
+  var inc;
+  try{inc=JSON.parse(txt)}catch(e){toast('That is not a valid backup');return}
+  if(!inc||typeof inc!=='object'){toast('That is not a valid backup');return}
+  ask('Replace all current records with this backup?','Restore',function(){
+    data=normalize(inc);save();closeAll();render();toast('Backup restored');
+  },false);
+}
+function importFile(inp){
+  var f=inp.files&&inp.files[0];if(!f)return;
+  var r=new FileReader();r.onload=function(){importFromText(String(r.result))};r.readAsText(f);inp.value='';
+}
+function pasteImport(){
+  var o=openSheet(sheetHead('Restore from pasted text')+'<p class="note">Paste the backup text you copied earlier.</p><textarea id="pt" rows="7" style="margin-top:10px"></textarea><div class="actions"><button onclick="CX.close()">Cancel</button><button class="primary" id="ptOk">Restore</button></div>');
+  $('#ptOk',o).addEventListener('click',function(){var t=$('#pt',o).value;closeSheet();setTimeout(function(){importFromText(t)},80)});
+}
+
+/* ================= money maths ================= */
+function receivedOn(date){
+  var pays=data.billPayments,total=0;
+  data.bills.filter(function(b){return (b.date||'')===date}).forEach(function(b){
+    var later=pays.filter(function(p){return p.billId===b.id}).reduce(function(a,p){return a+num(p.amount)},0);
+    total+=Math.max(0,num(b.paid)-later);
+  });
+  total+=pays.filter(function(p){return (p.date||'')===date}).reduce(function(a,p){return a+num(p.amount)},0);
+  return total;
+}
+function sumExp(list){return list.reduce(function(a,x){return a+num(x.amount)},0)}
+function allDue(){return data.bills.reduce(function(a,b){return a+Math.max(0,num(b.balance))},0)}
+
+/* ================= views ================= */
+var LISTS={};
+var VIEW={};
+
+VIEW.home=function(){
+  var t=today(),billsT=data.bills.filter(function(b){return b.date===t}),expT=data.expenses.filter(function(e){return e.date===t});
+  var low=data.stock.filter(isLow).length;
+  var gn=(data.settings.garageName||'').trim();
+  var h='<div class="card hero"><div><small>OWNER WORKSPACE</small><h2>'+esc(gn||'Welcome back')+'</h2><p>'+new Date().toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'short',year:'numeric'})+'</p></div><div class="orb">'+ic('car',30)+'</div></div>';
+  h+='<h3>Quick actions</h3><div class="qa">'+
+   '<button class="primary" onclick="CX.billNew()"><span class="ib">'+ic('receipt',18)+'</span>Create bill</button>'+
+   '<button onclick="CX.add(\'stock\')"><span class="ib">'+ic('box',18)+'</span>Add stock</button>'+
+   '<button onclick="CX.add(\'customer\')"><span class="ib">'+ic('users',18)+'</span>Add customer</button>'+
+   '<button onclick="CX.add(\'expense\')"><span class="ib">'+ic('wallet',18)+'</span>Add expense</button>'+
+   '<button onclick="CX.add(\'staff\')"><span class="ib">'+ic('idcard',18)+'</span>Add staff</button>'+
+   '<button onclick="CX.add(\'attendance\')"><span class="ib">'+ic('check',18)+'</span>Mark attendance</button>'+
+   '<button onclick="CX.go(\'staff\')"><span class="ib">'+ic('cal',18)+'</span>Staff &amp; calendar</button>'+
+   '<button onclick="CX.go(\'reports\')"><span class="ib">'+ic('chart',18)+'</span>View reports</button></div>';
+  h+='<h3>Today at a glance</h3><div class="grid"><div class="card stat hot"><div class="l">Received today</div><div class="n">'+money(receivedOn(t))+'</div></div>'+
+   '<div class="card stat"><div class="l">Expenses today</div><div class="n">'+money(sumExp(expT))+'</div></div>'+
+   '<div class="card stat"><div class="l">Bills today</div><div class="n">'+billsT.length+'</div></div>'+
+   '<div class="card stat"><div class="l">Pending dues (all)</div><div class="n">'+money(allDue())+'</div></div></div>';
+  if(low)h+='<div class="item" style="margin-top:12px" onclick="CX.go(\'stock\')"><div class="av low">'+ic('alert',20)+'</div><div class="body"><div class="t">'+low+' item'+(low>1?'s are':' is')+' running low</div><div class="m">Tap to review stock</div></div></div>';
+  h+='<div class="ph" style="margin-top:22px"><h2 style="font-size:1rem">Recent bills</h2><button class="sm" onclick="CX.go(\'bills\')">View all</button></div>';
+  var rec=data.bills.slice(0,4);
+  h+=rec.length?'<div class="list">'+rec.map(billCard).join('')+'</div>':empty('Your recent bills will appear here.');
+  return h;
+};
+
+function billCard(b){
+  var st=billStatus(b);
+  return '<div class="item" onclick="CX.viewBill(\''+b.id+'\')"><div class="av">'+ic('receipt',20)+'</div><div class="body"><div class="t">'+esc(b.billNo||'Bill')+' · '+esc(b.customer||'Customer')+'</div><div class="m">'+esc([b.vehicle,b.reg,b.date].filter(Boolean).join(' · '))+'</div><span class="chip '+st[1]+'">'+st[0]+'</span>'+(b.category?'<span class="chip">'+esc(b.category)+'</span>':'')+'</div><div class="side"><div class="t">'+money(b.amount)+'</div>'+(num(b.balance)>0?'<div class="m" style="color:var(--warn)">Due '+money(b.balance)+'</div>':'')+'</div></div>';
+}
+LISTS.bills=function(){
+  var s=q('bills');
+  var a=data.bills.filter(function(x){return !s||lc([x.billNo,x.customer,x.vehicle,x.reg,x.category,x.phone].join(' ')).indexOf(s)>=0});
+  return a.length?'<div class="list">'+a.map(billCard).join('')+'</div>':empty('No bills found.');
+};
+VIEW.bills=function(){
+  var pend=allDue();
+  return head('Billing',addBtn('New bill','CX.billNew()'))+
+   '<div class="grid" style="margin-bottom:14px"><div class="card stat hot"><div class="l">Total billed</div><div class="n">'+money(data.bills.reduce(function(a,b){return a+num(b.amount)},0))+'</div></div><div class="card stat"><div class="l">Pending dues</div><div class="n">'+money(pend)+'</div></div></div>'+
+   searchBox('bills','Search bill, customer, vehicle, phone')+'<div id="list-bills">'+LISTS.bills()+'</div>';
+};
+
+function isLow(s){return num(s.qty)<=num(s.minQty!=null&&s.minQty!==''?s.minQty:3)}
+LISTS.stock=function(){
+  var s=q('stock');
+  var a=data.stock.filter(function(x){return !s||lc([x.name,x.partNo].join(' ')).indexOf(s)>=0});
+  return a.length?'<div class="list">'+a.map(function(x){
+    var low=isLow(x);
+    return '<div class="item" onclick="CX.edit(\'stock\',\''+x.id+'\')"><div class="av '+(low?'low':'')+'">'+ic(low?'alert':'box',20)+'</div><div class="body"><div class="t">'+esc(x.name||'Part')+'</div><div class="m">'+(x.partNo?'#'+esc(x.partNo)+' · ':'')+'Buy '+money(x.buy)+' · Sell '+money(x.sell)+'</div>'+(low?'<span class="chip warn">Low stock</span>':'')+'</div><div class="side"><div class="t">'+num(x.qty)+'</div><div class="m">in stock</div></div></div>';
+  }).join('')+'</div>':empty('No stock items yet.');
+};
+LISTS.suppliers=function(){
+  return data.suppliers.length?'<div class="list">'+data.suppliers.map(function(x){
+    return '<div class="item" onclick="CX.edit(\'supplier\',\''+x.id+'\')"><div class="av">'+ic('truck',20)+'</div><div class="body"><div class="t">'+esc(x.name||'Supplier')+'</div><div class="m">'+esc([x.phone,x.parts,x.address].filter(Boolean).join(' · ')||'No details')+'</div></div><button class="xbtn danger" onclick="event.stopPropagation();CX.del(\'supplier\',\''+x.id+'\')">'+ic('trash',16)+'</button></div>';
+  }).join('')+'</div>':empty('No suppliers added.');
+};
+VIEW.stock=function(){
+  var val=data.stock.reduce(function(a,s){return a+num(s.qty)*num(s.buy)},0),low=data.stock.filter(isLow).length;
+  var h=head('Stock &amp; Inventory',addBtn('Add item',"CX.add('stock')"));
+  h+='<div class="grid3" style="margin-bottom:14px"><div class="card stat"><div class="l">Items</div><div class="n">'+data.stock.length+'</div></div><div class="card stat"><div class="l">Low stock</div><div class="n" style="color:'+(low?'var(--warn)':'inherit')+'">'+low+'</div></div><div class="card stat"><div class="l">Value</div><div class="n" style="font-size:1rem">'+money(val)+'</div></div></div>';
+  h+=searchBox('stock','Search part name or number')+'<div id="list-stock">'+LISTS.stock()+'</div>';
+  h+='<h3>Suppliers &amp; purchases</h3><div class="row wrap"><button class="primary sm" onclick="CX.add(\'supplier\')">'+ic('plus',16)+'Supplier</button><button class="sm" onclick="CX.add(\'purchase\')">'+ic('download',16)+'Record purchase</button></div><div style="margin-top:12px" id="list-suppliers">'+LISTS.suppliers()+'</div>';
+  h+='<h3>Recent purchases</h3>'+(data.purchases.length?'<div class="list">'+data.purchases.slice(0,10).map(function(x){
+    var s=byId(data.stock,x.partId),sp=byId(data.suppliers,x.supplierId);
+    return '<div class="item" style="cursor:default"><div class="av">'+ic('download',20)+'</div><div class="body"><div class="t">'+esc(s?s.name:'Stock purchase')+'</div><div class="m">'+esc(sp?sp.name:'Supplier')+' · '+num(x.qty)+' pcs · '+money(x.unitCost)+' each · '+esc(x.date||'')+'</div></div><div class="side"><div class="t">'+money(num(x.qty)*num(x.unitCost))+'</div></div><button class="xbtn danger" onclick="CX.del(\'purchase\',\''+x.id+'\')">'+ic('trash',16)+'</button></div>';
+  }).join('')+'</div>':empty('No purchase records yet.'));
+  return h;
+};
+
+function customerBills(c){
+  var n=lc(c.name).trim();
+  return data.bills.filter(function(b){return (n&&lc(b.customer).trim()===n)||(c.phone&&b.phone===c.phone)});
+}
+LISTS.customers=function(){
+  var s=q('customers');
+  var a=data.customers.filter(function(x){return !s||lc([x.name,x.phone,x.vehicle,x.reg,x.notes].join(' ')).indexOf(s)>=0});
+  return a.length?'<div class="list">'+a.map(function(c){
+    var bills=customerBills(c),due=bills.reduce(function(a,b){return a+num(b.balance)},0);
+    return '<div class="item" onclick="CX.viewCustomer(\''+c.id+'\')"><div class="av">'+ic('user',20)+'</div><div class="body"><div class="t">'+esc(c.name||'Customer')+'</div><div class="m">'+esc([c.phone,c.vehicle,c.reg].filter(Boolean).join(' · ')||'No details')+'</div><span class="chip">'+bills.length+' bill'+(bills.length===1?'':'s')+'</span>'+(due>0?'<span class="chip warn">Due '+money(due)+'</span>':'')+'</div></div>';
+  }).join('')+'</div>':empty('No customers yet. Tap “Add customer”.');
+};
+VIEW.customers=function(){
+  return head('Customers',addBtn('Add customer',"CX.add('customer')"))+searchBox('customers','Search name, phone, vehicle, registration')+'<div id="list-customers">'+LISTS.customers()+'</div>';
+};
+function viewCustomer(id){
+  var c=byId(data.customers,id);if(!c)return;
+  var bills=customerBills(c);
+  var h=sheetHead(esc(c.name||'Customer'))+'<div class="card"><div class="m" style="margin:0">'+esc([c.phone,c.vehicle,c.reg].filter(Boolean).join(' · ')||'No details')+'</div>'+(c.notes?'<div class="note">'+esc(c.notes)+'</div>':'')+'</div>'+
+   '<div class="actions">'+(c.phone?'<a class="btn" href="tel:'+esc(c.phone)+'">'+ic('phone',18)+'Call</a><button onclick="window.open(\'https://wa.me/'+waNumber(c.phone)+'\',\'_blank\')">'+ic('chat',18)+'WhatsApp</button>':'')+
+   '<button class="primary" onclick="CX.billFor(\''+id+'\')">'+ic('receipt',18)+'New bill</button><button onclick="CX.editFromSheet(\'customer\',\''+id+'\')">'+ic('edit',18)+'Edit</button><button class="danger" onclick="CX.del(\'customer\',\''+id+'\')">'+ic('trash',18)+'Delete</button></div>'+
+   '<h3>Service history</h3>'+(bills.length?'<div class="list">'+bills.map(function(b){var st=billStatus(b);return '<div class="item" onclick="CX.viewBillFrom(\''+b.id+'\')"><div class="body"><div class="t">'+esc(b.billNo||'Bill')+' · '+money(b.amount)+'</div><div class="m">'+esc([b.date,b.category].filter(Boolean).join(' · '))+'</div></div><span class="chip '+st[1]+'">'+st[0]+'</span></div>'}).join('')+'</div>':empty('No bills for this customer yet.'));
+  openSheet(h);
+}
+function billFor(id){
+  var c=byId(data.customers,id);closeSheet();
+  setTimeout(function(){openBill(null,{customer:c.name,phone:c.phone,vehicle:c.vehicle,reg:c.reg})},80);
+}
+
+/* staff */
+var calStaff=null,calDate=new Date();
+function attFor(staffId,date){return data.attendance.find(function(a){return a.staffId===staffId&&a.date===date})}
+LISTS.staff=function(){
+  var s=q('staff'),t=today();
+  var a=data.staff.filter(function(x){return !s||lc([x.name,x.phone,x.role,x.notes].join(' ')).indexOf(s)>=0});
+  return a.length?'<div class="list">'+a.map(function(x){
+    var rec=attFor(x.id,t),left=Math.max(0,num(x.leaveTotal)-num(x.leaveUsed));
+    return '<div class="item" onclick="CX.viewStaff(\''+x.id+'\')"><div class="av">'+ic('idcard',20)+'</div><div class="body"><div class="t">'+esc(x.name||'Staff')+'</div><div class="m">'+esc([x.role,x.phone,'Salary '+money(x.salary)].filter(Boolean).join(' · '))+'</div>'+
+     '<span class="chip '+(rec?(rec.status==='Present'?'ok':rec.status==='Absent'?'bad':'warn'):'')+'">'+(rec?'Today: '+esc(rec.status):'Not marked today')+'</span><span class="chip '+(x.salaryStatus==='Paid'?'ok':'warn')+'">Salary '+esc(x.salaryStatus||'Pending')+'</span>'+(num(x.leaveTotal)?'<span class="chip">'+left+' leave left</span>':'')+'</div></div>';
+  }).join('')+'</div>':empty('No staff yet. Tap “Add staff”.');
+};
+LISTS.attendance=function(){
+  var s=q('attendance');
+  var a=data.attendance.filter(function(x){return !s||lc([x.staffName,x.date,x.status,x.note].join(' ')).indexOf(s)>=0}).sort(function(x,y){return (y.date||'').localeCompare(x.date||'')}).slice(0,40);
+  return a.length?'<div class="list">'+a.map(function(x){
+    return '<div class="item" onclick="CX.edit(\'attendance\',\''+x.id+'\')"><div class="av">'+ic('check',20)+'</div><div class="body"><div class="t">'+esc(x.staffName||'Staff')+'</div><div class="m">'+esc(x.date||'')+(x.note?' · '+esc(x.note):'')+'</div></div><span class="chip '+(x.status==='Present'?'ok':x.status==='Absent'?'bad':'warn')+'">'+esc(x.status)+'</span><button class="xbtn danger" onclick="event.stopPropagation();CX.del(\'attendance\',\''+x.id+'\')">'+ic('trash',16)+'</button></div>';
+  }).join('')+'</div>':empty('No attendance records yet.');
+};
+VIEW.staff=function(){
+  var t=today(),pres=data.attendance.filter(function(r){return r.date===t&&r.status==='Present'}).length,lv=data.attendance.filter(function(r){return r.date===t&&r.status==='Leave'}).length;
+  var h=head('Staff &amp; Attendance',addBtn('Add staff',"CX.add('staff')"));
+  h+='<div class="grid3" style="margin-bottom:14px"><div class="card stat"><div class="l">Staff</div><div class="n">'+data.staff.length+'</div></div><div class="card stat"><div class="l">Present today</div><div class="n">'+pres+'</div></div><div class="card stat"><div class="l">On leave</div><div class="n">'+lv+'</div></div></div>';
+  h+=searchBox('staff','Search name, role, phone')+'<div id="list-staff">'+LISTS.staff()+'</div>';
+  h+='<div class="ph" style="margin-top:22px"><h2 style="font-size:1rem">Daily attendance</h2><button class="primary sm" onclick="CX.add(\'attendance\')">'+ic('check',16)+'Mark</button></div>'+searchBox('attendance','Search attendance')+'<div id="list-attendance">'+LISTS.attendance()+'</div>';
+  h+='<div class="ph" style="margin-top:22px"><h2 style="font-size:1rem">Salary payments</h2><button class="sm" onclick="CX.add(\'salary\')">'+ic('rupee',16)+'Pay salary</button></div>';
+  h+=data.salaryPayments.length?'<div class="list">'+data.salaryPayments.slice(0,15).map(function(x){return '<div class="item" style="cursor:default"><div class="av">'+ic('rupee',20)+'</div><div class="body"><div class="t">'+esc(x.staffName||'Employee')+'</div><div class="m">'+esc([x.month,x.date,x.mode].filter(Boolean).join(' · '))+'</div></div><div class="side"><div class="t">'+money(x.amount)+'</div></div><button class="xbtn danger" onclick="CX.del(\'salary\',\''+x.id+'\')">'+ic('trash',16)+'</button></div>'}).join('')+'</div>':empty('No salary payments recorded.');
+  return h;
+};
+function viewStaff(id){
+  var s=byId(data.staff,id);if(!s)return;
+  var rec=attFor(id,today());
+  var h=sheetHead(esc(s.name||'Staff'))+'<div class="card"><div class="m" style="margin:0">'+esc([s.role,s.phone,'Salary '+money(s.salary),s.joiningDate?'Joined '+s.joiningDate:''].filter(Boolean).join(' · '))+'</div><div class="note">Today: '+(rec?esc(rec.status):'not marked')+' · Leaves '+num(s.leaveUsed)+'/'+num(s.leaveTotal)+' used'+(s.notes?'<br>'+esc(s.notes):'')+'</div></div>'+
+   '<h3>Mark today</h3><div class="seg">'+['Present','Absent','Leave','Half day'].map(function(st){return '<button class="'+(rec&&rec.status===st?'on':'')+'" onclick="CX.markToday(\''+id+'\',\''+st+'\')">'+st+'</button>'}).join('')+'</div>'+
+   '<div class="actions"><button class="primary" onclick="CX.openCal(\''+id+'\')">'+ic('cal',18)+'Attendance calendar</button><button onclick="CX.paySalary(\''+id+'\')">'+ic('rupee',18)+'Pay salary</button>'+
+   (s.phone?'<a class="btn" href="tel:'+esc(s.phone)+'">'+ic('phone',18)+'Call</a>':'')+'<button onclick="CX.editFromSheet(\'staff\',\''+id+'\')">'+ic('edit',18)+'Edit</button><button class="danger" onclick="CX.del(\'staff\',\''+id+'\')">'+ic('trash',18)+'Delete</button></div>';
+  openSheet(h);
+}
+function setAtt(staffId,date,status){
+  var s=byId(data.staff,staffId);
+  var ex=attFor(staffId,date);
+  if(!status){if(ex)data.attendance=data.attendance.filter(function(a){return a.id!==ex.id});return}
+  if(ex){ex.status=status;ex.staffName=s?s.name:ex.staffName}
+  else data.attendance.unshift({id:uid(),createdAt:new Date().toISOString(),staffId:staffId,staffName:s?s.name:'Staff',date:date,status:status,note:''});
+}
+function markToday(id,st){setAtt(id,today(),st);closeSheet();persist();toast('Marked '+st)}
+function paySalary(id){closeSheet();setTimeout(function(){openForm('salary',null,{staffId:id,amount:num((byId(data.staff,id)||{}).salary)})},80)}
+function openCal(id){calStaff=id;calDate=new Date();calDate.setDate(1);closeSheet();setTimeout(function(){openSheet('<div id="calBody"></div>');renderCal()},80)}
+function shiftCal(d){calDate.setMonth(calDate.getMonth()+d);renderCal()}
+function renderCal(){
+  var s=byId(data.staff,calStaff),el=$('#calBody');if(!s||!el)return;
+  var y=calDate.getFullYear(),m=calDate.getMonth(),pre=y+'-'+pad(m+1);
+  var recs=data.attendance.filter(function(r){return r.staffId===calStaff&&String(r.date||'').indexOf(pre)===0}),by={};
+  recs.forEach(function(r){by[r.date]=r.status});
+  var first=new Date(y,m,1).getDay(),days=new Date(y,m+1,0).getDate(),t=today();
+  var g=['S','M','T','W','T','F','S'].map(function(d){return '<div class="w">'+d+'</div>'}).join('');
+  for(var i=0;i<first;i++)g+='<div></div>';
+  for(var d=1;d<=days;d++){
+    var k=pre+'-'+pad(d),st=by[k]||'',cls=st==='Present'?'p':st==='Absent'?'a':st==='Leave'?'l':st==='Half day'?'h':'';
+    g+='<button class="d '+cls+(k===t?' t':'')+'" onclick="CX.dayPick(\''+k+'\')">'+d+'</button>';
+  }
+  var cnt=function(x){return recs.filter(function(r){return r.status===x}).length};
+  el.innerHTML=sheetHead(esc(s.name||'Staff'))+'<div class="row sb"><button class="xbtn" onclick="CX.shiftCal(-1)">'+ic('left',18)+'</button><b>'+calDate.toLocaleDateString('en-IN',{month:'long',year:'numeric'})+'</b><button class="xbtn" onclick="CX.shiftCal(1)">'+ic('right',18)+'</button></div>'+
+   '<div class="cal">'+g+'</div><div class="legend"><span><i style="background:#35d6a8"></i>Present</span><span><i style="background:#ff6b82"></i>Absent</span><span><i style="background:#ffb84d"></i>Leave</span><span><i style="background:#5cb3ff"></i>Half day</span></div>'+
+   '<div class="grid3" style="margin-top:14px"><div class="card stat"><div class="l">Present</div><div class="n">'+cnt('Present')+'</div></div><div class="card stat"><div class="l">Leave</div><div class="n">'+cnt('Leave')+'</div></div><div class="card stat"><div class="l">Absent</div><div class="n">'+cnt('Absent')+'</div></div></div><div class="note">Tap any date to set or change attendance.</div>';
+}
+function dayPick(date){
+  var s=byId(data.staff,calStaff);
+  var h=sheetHead(esc(date))+'<div class="list">'+['Present','Absent','Leave','Half day'].map(function(st){return '<button onclick="CX.dayPut(\''+date+'\',\''+st+'\')">'+st+'</button>'}).join('')+'<button class="danger" onclick="CX.dayPut(\''+date+'\',\'\')">Clear</button></div>';
+  openSheet(h,'small');
+}
+function dayPut(date,st){setAtt(calStaff,date,st);closeSheet();save();renderCal();var p=page;if(p==='staff'||p==='home'){/* refresh page behind */$('#page').innerHTML=VIEW[page]()}}
+
+/* expenses */
+LISTS.expenses=function(){
+  var s=q('expenses');
+  var a=data.expenses.filter(function(x){return !s||lc([x.title,x.category,x.paidTo,x.paymentMode,x.notes,x.date].join(' ')).indexOf(s)>=0}).sort(function(x,y){return (y.date||'').localeCompare(x.date||'')});
+  return a.length?'<div class="list">'+a.map(expCard).join('')+'</div>':empty('No expenses yet.');
+};
+function expCard(x){
+  return '<div class="item" onclick="CX.edit(\'expense\',\''+x.id+'\')"><div class="av">'+ic('wallet',20)+'</div><div class="body"><div class="t">'+esc(x.title||'Expense')+'</div><div class="m">'+esc([x.category,x.paidTo,x.paymentMode,x.date].filter(Boolean).join(' · '))+'</div></div><div class="side"><div class="t">'+money(x.amount)+'</div></div><button class="xbtn danger" onclick="event.stopPropagation();CX.del(\'expense\',\''+x.id+'\')">'+ic('trash',16)+'</button></div>';
+}
+VIEW.expenses=function(){
+  var mk=today().slice(0,7),mt=sumExp(data.expenses.filter(function(e){return (e.date||'').indexOf(mk)===0}));
+  return head('Expenses',addBtn('Add expense',"CX.add('expense')"))+
+   '<div class="grid" style="margin-bottom:14px"><div class="card stat hot"><div class="l">This month</div><div class="n">'+money(mt)+'</div></div><div class="card stat"><div class="l">All time ('+data.expenses.length+')</div><div class="n">'+money(sumExp(data.expenses))+'</div></div></div>'+
+   searchBox('expenses','Search expense, category, vendor')+'<div id="list-expenses">'+LISTS.expenses()+'</div>';
+};
+
+/* reports */
+var repDate=null,pnlMonth=null;
+function rd(){if(!repDate)repDate=today();return repDate}
+function setRepDate(v){if(v){repDate=v;render()}}
+function repToday(){repDate=today();render()}
+function repYest(){var d=new Date();d.setDate(d.getDate()-1);repDate=dstr(d);render()}
+var PAL=['#2f8cff','#5cc8ff','#7c6cff','#ffb84d','#ff6b8b','#36d6e7','#a3b6d9','#4f6bd6','#35d6a8'];
+VIEW.reports=function(){
+  var sel=rd(),bills=data.bills.filter(function(b){return (b.date||'')===sel}),exps=data.expenses.filter(function(e){return (e.date||'')===sel});
+  var rec=receivedOn(sel),billed=bills.reduce(function(a,b){return a+num(b.amount)},0),ex=sumExp(exps),profit=bills.reduce(function(a,b){return a+num(b.profit)},0),dues=bills.reduce(function(a,b){return a+Math.max(0,num(b.balance))},0);
+  var h=head('Reports','<button class="sm" onclick="CX.export()">'+ic('download',16)+'Backup</button>');
+  h+='<div class="card"><label style="margin-top:0">View dashboard for date</label><input type="date" value="'+esc(sel)+'" onchange="CX.repDate(this.value)"><div class="row" style="margin-top:10px"><button class="sm" onclick="CX.repToday()">Today</button><button class="sm" onclick="CX.repYest()">Yesterday</button></div></div>';
+  h+='<div class="grid" style="margin-top:12px">'+
+   '<button class="card stat hot" onclick="CX.chart(\'earnings\')"><div class="l">Earnings</div><div class="n">'+money(rec)+'</div><div class="foot">Tap for chart</div></button>'+
+   '<button class="card stat" onclick="CX.chart(\'expenses\')"><div class="l">Expenses</div><div class="n">'+money(ex)+'</div><div class="foot">Tap for chart</div></button>'+
+   '<button class="card stat" onclick="CX.chart(\'profit\')"><div class="l">Profit</div><div class="n">'+money(profit)+'</div><div class="foot">Tap for chart</div></button>'+
+   '<button class="card stat" onclick="CX.chart(\'bills\')"><div class="l">Bills</div><div class="n">'+bills.length+'</div><div class="foot">Tap for chart</div></button>'+
+   '<button class="card stat" style="grid-column:1/-1" onclick="CX.chart(\'dues\')"><div class="l">Pending customer dues (this date)</div><div class="n">'+money(dues)+'</div><div class="foot">Tap for chart</div></button></div>';
+  h+='<h3>Billing summary</h3><div class="card"><div class="l" style="color:var(--muted);font-size:.78rem">Total billed on this date</div><div class="n" style="font-size:1.6rem;font-weight:800">'+money(billed)+'</div><div class="bar"><span style="width:'+(rec?Math.min(100,rec/((rec+ex)||1)*100):0)+'%"></span></div><div class="note">Bar shows received vs expenses for the day.</div></div>';
+  h+='<h3>Bills on this date</h3>'+(bills.length?'<div class="list">'+bills.map(billCard).join('')+'</div>':empty('No bills on this date.'));
+  h+='<h3>Expenses on this date</h3>'+(exps.length?'<div class="list">'+exps.map(expCard).join('')+'</div>':empty('No expenses on this date.'));
+  var pm=pnlMonth||today().slice(0,7),y=+pm.slice(0,4),mo=+pm.slice(5,7),dim=new Date(y,mo,0).getDate(),inc=0;
+  for(var d=1;d<=dim;d++)inc+=receivedOn(pm+'-'+pad(d));
+  var mex=sumExp(data.expenses.filter(function(e){return (e.date||'').indexOf(pm)===0})),mb=data.bills.filter(function(b){return (b.date||'').indexOf(pm)===0});
+  h+='<h3>Monthly profit &amp; loss</h3><div class="card"><input type="month" value="'+esc(pm)+'" onchange="CX.pnl(this.value)"><div class="grid3" style="margin-top:12px"><div class="stat"><div class="l">Income</div><div class="n" style="font-size:1rem">'+money(inc)+'</div></div><div class="stat"><div class="l">Expenses</div><div class="n" style="font-size:1rem">'+money(mex)+'</div></div><div class="stat"><div class="l">Net</div><div class="n" style="font-size:1rem;color:'+(inc-mex>=0?'var(--ok)':'var(--bad)')+'">'+money(inc-mex)+'</div></div></div><div class="note">'+mb.length+' bill'+(mb.length===1?'':'s')+' in this month. Income counts money actually received.</div></div>';
+  return h;
+};
+function chartItems(kind){
+  var date=rd(),bs=data.bills.filter(function(x){return (x.date||'')===date}),ex=data.expenses.filter(function(x){return (x.date||'')===date}),map={},pays=data.billPayments;
+  var add=function(l,v){v=num(v);if(v<=0)return;l=l||'Unspecified';map[l]=(map[l]||0)+v};
+  if(kind==='earnings'){bs.forEach(function(b){var later=pays.filter(function(p){return p.billId===b.id}).reduce(function(a,p){return a+num(p.amount)},0);add(b.paymentMode||'Not specified',Math.max(0,num(b.paid)-later))});pays.filter(function(p){return (p.date||'')===date}).forEach(function(p){add(p.mode||'Not specified',p.amount)})}
+  if(kind==='expenses')ex.forEach(function(x){add(x.category||x.title||'Other',x.amount)});
+  if(kind==='profit')bs.forEach(function(b){add(b.category||b.billNo||'Bill',b.profit)});
+  if(kind==='bills')bs.forEach(function(b){add(b.category||'General service',1)});
+  if(kind==='dues')bs.forEach(function(b){add(b.customer||'Customer',Math.max(0,num(b.balance)))});
+  return Object.keys(map).map(function(k){return{label:k,value:map[k]}}).sort(function(a,b){return b.value-a.value}).slice(0,9);
+}
+function pieSvg(items){
+  var total=items.reduce(function(a,x){return a+x.value},0);
+  if(!total)return '<div class="empty" style="width:100%">No data for this date.</div>';
+  var ang=-90,paths='';
+  items.forEach(function(it,i){
+    var sw=it.value/total*360,a0=ang*Math.PI/180,a1=(ang+sw)*Math.PI/180;
+    var x1=150+112*Math.cos(a0),y1=150+112*Math.sin(a0),x2=150+112*Math.cos(a1),y2=150+112*Math.sin(a1);
+    var d=sw>=359.99?'M150 38A112 112 0 1 1 149.99 38Z':'M150 150L'+x1+' '+y1+'A112 112 0 '+(sw>180?1:0)+' 1 '+x2+' '+y2+'Z';
+    paths+='<path d="'+d+'" fill="'+PAL[i%PAL.length]+'" stroke="rgba(0,0,0,.35)" stroke-width="2"/>';ang+=sw;
+  });
+  return '<svg viewBox="0 0 300 300" width="260" height="260">'+paths+'<circle cx="150" cy="150" r="50" fill="var(--sheet2)"/><text x="150" y="146" text-anchor="middle" font-size="11" fill="var(--muted)">TOTAL</text><text x="150" y="166" text-anchor="middle" font-size="16" font-weight="800" fill="var(--text)">'+(total>999999?'₹'+(total/100000).toFixed(1)+'L':money(total))+'</text></svg>';
+}
+function openChart(kind){
+  var names={earnings:'Earnings breakdown',expenses:'Expense breakdown',profit:'Profit breakdown',bills:'Bills breakdown',dues:'Pending dues breakdown'};
+  var items=chartItems(kind);
+  openSheet(sheetHead(names[kind])+'<div class="note" style="margin:0 0 6px">Date: '+esc(rd())+'</div><div class="pie">'+pieSvg(items)+'</div>'+
+   (items.length?items.map(function(it,i){return '<div class="lg"><span><i style="background:'+PAL[i%PAL.length]+'"></i>'+esc(it.label)+'</span><b>'+(kind==='bills'?it.value+' bills':money(it.value))+'</b></div>'}).join(''):''));
+}
+
+/* settings */
+VIEW.settings=function(){
+  var s=data.settings,bg=bgState(),th=themeName();
+  var seg=function(cur,opts,fn){return '<div class="seg">'+opts.map(function(o){return '<button class="'+(cur===o[0]?'on':'')+'" onclick="'+fn+'(\''+o[0]+'\')">'+o[1]+'</button>'}).join('')+'</div>'};
+  var h=head('Settings')+
+  '<div class="card"><h3 style="margin-top:0">Garage profile</h3><p class="note" style="margin-top:0">Shown on the home screen and on every invoice.</p>'+
+   '<label>Garage name</label><input id="s_name" maxlength="70" value="'+esc(s.garageName||'')+'" placeholder="e.g. My Garage">'+
+   '<label>Phone</label><input id="s_phone" type="tel" value="'+esc(s.garagePhone||'')+'">'+
+   '<label>Address</label><input id="s_addr" value="'+esc(s.garageAddress||'')+'">'+
+   '<label>Garage logo (optional)</label><input id="s_logo" type="file" accept="image/*">'+
+   (s.garageLogo?'<div class="row" style="margin-top:10px"><img src="'+esc(s.garageLogo)+'" alt="" style="width:56px;height:56px;object-fit:contain;border-radius:12px;border:1px solid var(--line)"><button class="sm danger" onclick="CX.clearLogo()">Remove logo</button></div>':'')+
+   '<button class="primary full" style="margin-top:16px" onclick="CX.saveProfile()">Save profile</button></div>'+
+  '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Appearance</h3><label style="margin-top:0">Theme</label>'+seg(th,[['blue','Electric Blue'],['midnight','Midnight'],['light','Light']],'CX.theme')+
+   '<label>Text size</label>'+seg(String(num(s.fontScale)||1),[['0.9','Small'],['1','Default'],['1.15','Large'],['1.3','XL']],'CX.font')+'</div>'+
+  '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Background</h3><label style="margin-top:0">Preset</label>'+seg(bg.s,[['cars','Garage cars'],['blue','Blue'],['dark','Black'],['custom','Mine']],'CX.bg')+
+   '<label>Image visibility <span id="opv">'+bg.o+'%</span></label><input type="range" min="10" max="100" value="'+bg.o+'" oninput="CX.bgOp(this.value)">'+
+   '<label>Upload your own wallpaper</label><input id="s_bg" type="file" accept="image/*" onchange="CX.bgUpload(this)">'+
+   '<button class="sm full" style="margin-top:10px" onclick="CX.bgReset()">Reset background</button></div>'+
+  '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Backup &amp; restore</h3><p class="note" style="margin-top:0">Your records live only on this phone. Back up regularly, especially before uninstalling.</p>'+
+   '<div class="row wrap" style="margin-top:10px"><button class="primary" style="flex:1" onclick="CX.export()">'+ic('download',18)+'Export file</button><button style="flex:1" onclick="CX.copyBackup()">'+ic('copy',18)+'Copy text</button></div>'+
+   '<div class="row wrap" style="margin-top:8px"><button style="flex:1" onclick="document.getElementById(\'impf\').click()">'+ic('upload',18)+'Import file</button><button style="flex:1" onclick="CX.pasteImport()">Paste &amp; restore</button></div><input id="impf" type="file" accept="application/json,.json" hidden onchange="CX.importFile(this)"></div>'+
+  '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">App PIN lock</h3><p class="note" style="margin-top:0">'+(s.appPin?'PIN is ON. It is asked each time the app opens.':'Optional. Ask for a PIN each time the app opens.')+'</p><input id="s_pin" type="password" inputmode="numeric" maxlength="8" placeholder="4–8 digit PIN" style="margin-top:8px"><div class="row" style="margin-top:10px"><button class="primary" style="flex:1" onclick="CX.setPin()">'+ic('lock',18)+'Save PIN</button>'+(s.appPin?'<button style="flex:1" onclick="CX.rmPin()">Remove PIN</button>':'')+'</div><div class="note">If you forget the PIN, the only way in is clearing app data, which erases records. Keep a backup.</div></div>'+
+  '<div class="card" style="margin-top:12px"><h3 style="margin-top:0">About</h3><p class="note" style="margin-top:0">CarvoX version '+VERSION+'</p><button class="sm" style="margin-top:10px" onclick="CX.about()">'+ic('info',16)+'What’s new</button></div>'+
+  '<div class="card" style="margin-top:12px"><h3 style="margin-top:0;color:var(--bad)">Danger zone</h3><button class="danger full" onclick="CX.reset()">'+ic('trash',18)+'Reset all data</button></div>';
+  return h;
+};
+function downscale(file,max,cb){
+  var r=new FileReader();
+  r.onload=function(){var im=new Image();im.onload=function(){
+    try{var sc=Math.min(1,max/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(im.width*sc));c.height=Math.max(1,Math.round(im.height*sc));
+      c.getContext('2d').drawImage(im,0,0,c.width,c.height);cb(c.toDataURL(file.type==='image/png'?'image/png':'image/jpeg',.85))}catch(e){toast('Could not use this image')}};
+    im.onerror=function(){toast('Could not read this image')};im.src=r.result};
+  r.readAsDataURL(file);
+}
+function saveProfile(){
+  var s=data.settings;
+  s.garageName=$('#s_name').value.trim().slice(0,70);s.garagePhone=$('#s_phone').value.trim();s.garageAddress=$('#s_addr').value.trim();
+  var f=$('#s_logo').files&&$('#s_logo').files[0];
+  if(f){downscale(f,512,function(u){s.garageLogo=u;persist();toast('Profile saved')});return}
+  persist();toast('Profile saved');
+}
+function setPin(){
+  var p=$('#s_pin').value;
+  if(!/^\d{4,8}$/.test(p)){toast('PIN must be 4 to 8 digits');return}
+  data.settings.appPin=p;persist();toast('PIN saved');
+}
+
+/* PIN lock + about */
+function showLock(){
+  var ov=document.createElement('div');ov.id='lock';
+  ov.innerHTML='<div class="card" style="width:100%;max-width:340px;text-align:center;padding:24px"><div class="mark" style="margin:0 auto 14px;width:60px;height:60px"><img alt="" src="'+FALLBACK_LOGO+'"></div><h2>CarvoX</h2><p class="note">Enter your PIN</p><input id="lk" type="password" inputmode="numeric" maxlength="8" style="margin-top:12px;text-align:center;font-size:1.2rem;letter-spacing:6px"><button class="primary full" style="margin-top:12px" id="lkOk">Unlock</button><p id="lkE" style="color:var(--bad);font-size:.85rem;margin-top:10px;min-height:1em"></p></div>';
+  document.body.appendChild(ov);
+  var go2=function(){if($('#lk').value===data.settings.appPin){try{sessionStorage.setItem('cx_ok','1')}catch(e){}ov.remove()}else{$('#lkE').textContent='Incorrect PIN';$('#lk').value=''}};
+  $('#lkOk').addEventListener('click',go2);$('#lk').addEventListener('keydown',function(e){if(e.key==='Enter')go2()});
+  setTimeout(function(){$('#lk').focus()},50);
+}
+function about(){
+  openSheet(sheetHead('CarvoX '+VERSION)+'<ul style="padding-left:20px;line-height:1.7;color:var(--muted);margin:0"><li>New premium blue design with glass cards.</li><li>Tap any bill to preview, share the invoice as an image or print it.</li><li>Dues now update automatically when you receive a payment.</li><li>Attendance calendar: tap a date to set status.</li><li>Suppliers, stock purchases and salary payments.</li><li>Reports with charts and monthly profit &amp; loss.</li><li>Backup export, copy and restore. PIN lock. Themes and wallpapers.</li><li>Your earlier records stay on this device.</li></ul>');
+}
+
+/* ================= public API ================= */
+window.CX={
+  go:go,close:closeSheet,search:setSearch,
+  add:function(t){openForm(t,null)},edit:function(t,id){openForm(t,id)},editFromSheet:function(t,id){closeSheet();setTimeout(function(){openForm(t,id)},80)},
+  del:removeRecord,
+  billNew:function(){openBill(null)},viewBill:viewBill,viewBillFrom:function(id){closeSheet();setTimeout(function(){viewBill(id)},80)},editBill:editBill,payBill:payBill,waBill:waBill,shareBill:shareBill,printBill:printBill,
+  addPart:addPart,addCustom:addCustom,rmPart:function(i){parts.splice(i,1);renderBillLists()},rmCustom:function(i){customs.splice(i,1);renderBillLists()},estProfit:estProfit,
+  viewCustomer:viewCustomer,billFor:billFor,
+  viewStaff:viewStaff,markToday:markToday,paySalary:paySalary,openCal:openCal,shiftCal:shiftCal,dayPick:dayPick,dayPut:dayPut,
+  repDate:setRepDate,repToday:repToday,repYest:repYest,chart:openChart,pnl:function(v){if(v){pnlMonth=v;render()}},
+  export:exportBackup,copyBackup:function(){copyText(backupJSON(),'Backup copied')},importFile:importFile,pasteImport:pasteImport,
+  saveProfile:saveProfile,clearLogo:function(){delete data.settings.garageLogo;persist()},
+  theme:function(v){data.settings.theme=v;persist()},font:function(v){data.settings.fontScale=num(v)||1;persist()},
+  bg:function(v){try{localStorage.setItem(BG_STYLE,v)}catch(e){}render()},
+  bgOp:function(v){try{localStorage.setItem(BG_OP,String(v))}catch(e){}var e=$('#opv');if(e)e.textContent=v+'%';applyLook()},
+  bgUpload:function(inp){var f=inp.files&&inp.files[0];if(!f)return;downscale(f,1600,function(u){try{localStorage.setItem(BG_CUSTOM,u);localStorage.setItem(BG_STYLE,'custom');render();toast('Wallpaper saved')}catch(e){toast('Image too large, try a smaller one')}})},
+  bgReset:function(){try{localStorage.removeItem(BG_CUSTOM);localStorage.setItem(BG_STYLE,'cars');localStorage.setItem(BG_OP,'88')}catch(e){}render();toast('Background reset')},
+  setPin:setPin,rmPin:function(){ask('Remove the app PIN?','Remove',function(){delete data.settings.appPin;persist();toast('PIN removed')},false)},
+  about:about,
+  reset:function(){ask('Delete ALL records on this phone? Export a backup first. This cannot be undone.','Delete everything',function(){ask('Last check: really erase everything?','Yes, erase',function(){data=emptyData();save();render();toast('All data cleared')})})}
+};
+
+/* ================= boot ================= */
+try{
+  $('#hInfo').addEventListener('click',about);
+  $('#hSet').addEventListener('click',function(){go('settings')});
+  render();
+  try{if(data.settings.appPin&&!sessionStorage.getItem('cx_ok'))showLock()}catch(e){if(data.settings.appPin)showLock()}
+}catch(bootError){
+  showErr('CarvoX startup error: '+(bootError&&bootError.message?bootError.message:bootError));
+  try{renderNav();renderHeader()}catch(ignore){}
+  var pageEl=$('#page');if(pageEl)pageEl.innerHTML='<div class="empty">CarvoX could not start. Your local records are untouched. Please send the red error message to support.</div>';
+}
+})();
+</script>
+</body>
+</html>
+
