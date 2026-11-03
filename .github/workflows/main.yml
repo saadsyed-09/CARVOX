@@ -30,6 +30,18 @@ steps:
 
   - name: Generate Android project
     run: npx cap add android
+    
+  - name: Generate Android project
+    run: npx cap add android
+
+  - name: Install Capacitor Assets
+    run: npm install --save-dev @capacitor/assets
+
+  - name: Generate CARVOX launcher icons
+    run: npx capacitor-assets generate --android
+
+  - name: Sync Capacitor
+    run: npx cap sync android
 
   - name: Sync Capacitor
     run: npx cap sync android
