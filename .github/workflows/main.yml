@@ -20,7 +20,7 @@ steps:
     uses: actions/setup-java@v4
     with:
       distribution: temurin
-      java-version: 21
+      java-version: 17
 
   - name: Install dependencies
     run: npm install
@@ -28,20 +28,14 @@ steps:
   - name: Build CarvoX web assets
     run: npm run build
 
-  - name: Generate Android project
-    run: npx cap add android
-    
-  - name: Generate Android project
-    run: npx cap add android
-
   - name: Install Capacitor Assets
     run: npm install --save-dev @capacitor/assets
 
+  - name: Generate Android project
+    run: npx cap add android
+
   - name: Generate CARVOX launcher icons
     run: npx capacitor-assets generate --android
-
-  - name: Sync Capacitor
-    run: npx cap sync android
 
   - name: Sync Capacitor
     run: npx cap sync android
