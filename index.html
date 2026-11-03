@@ -829,27 +829,10 @@ async function shareBill(id){
     var cap=window.Capacitor;
     var isNative=!!(cap&&cap.isNativePlatform&&cap.isNativePlatform());
 
-    // Android/iOS Capacitor: FileSharer creates a real image attachment with
-    // a FileProvider URI, ClipData and read grants for the receiving app.
+    // Android/iOS Capacitor: use the official Capacitor Filesystem + Share
+    // plugins. The PNG is written to the app cache, then shared as a file URI.
     if(isNative){
       var base64=await blobToBase64(blob);
-      var fileSharer=nativePlugin('FileSharer');
-      if(fileSharer&&typeof fileSharer.share==='function'){
-        try{
-          await fileSharer.share({
-            filename:fileName,
-            contentType:'image/png',
-            base64Data:base64,
-            title:'CarvoX Invoice '+(b.billNo||''),
-            android:{chooserTitle:'Share invoice image'}
-          });
-          return;
-        }catch(fileShareError){
-          console.warn('FileSharer failed; trying Capacitor Share fallback.',fileShareError);
-        }
-      }
-
-      // Fallback to the official Capacitor Share plugin.
       var fs=nativePlugin('Filesystem'),sh=nativePlugin('Share');
       if(fs&&typeof fs.writeFile==='function'&&sh&&typeof sh.share==='function'){
         try{
