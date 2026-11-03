@@ -218,7 +218,6 @@ nav button.on .ic{color:var(--accent2)}
 </div>
 <div id="printArea"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" crossorigin="anonymous"></script>
 <script>
 (function(){
 "use strict";
@@ -293,4 +292,7 @@ function normalize(d){
     else out[k]=Array.isArray(d&&d[k])?d[k]:[];
   });
   delete out._backupInfo;
-  re
+  return out;
+}
+var data=load();
+function save(){try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){showErr('Storage is
