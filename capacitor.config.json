@@ -1,0 +1,6 @@
+{
+  "appId": "com.garagemanager.app",
+  "appName": "CarvoX",
+  "webDir": "www",
+  "bundledWebRuntime": false
+}
