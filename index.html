@@ -444,7 +444,7 @@ window.addEventListener('error',function(e){showErr(e.message||'unknown')});
 window.addEventListener('unhandledrejection',function(e){showErr(String((e.reason&&e.reason.message)||e.reason))});
 
 /* ================= helpers ================= */
-var KEY='garage_os_fresh_v1',VERSION='3.0';
+var KEY='garage_os_fresh_v1',VERSION='4.0';
 var $=function(s,r){return (r||document).querySelector(s)};
 var num=function(v){var n=parseFloat(v);return isFinite(n)?n:0};
 var pad=function(n){return String(n).padStart(2,'0')};
@@ -493,7 +493,7 @@ upload:'<path d="M12 16V5M7 9l5-5 5 5M5 20h14"/>'
 function ic(n,s){s=s||20;return '<svg class="ic" viewBox="0 0 24 24" width="'+s+'" height="'+s+'" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+(IC[n]||'')+'</svg>'}
 
 /* ================= data ================= */
-function emptyData(){return{customers:[],stock:[],jobs:[],bills:[],expenses:[],staff:[],attendance:[],suppliers:[],purchases:[],salaryPayments:[],billPayments:[],settings:{theme:'blue'}}}
+function emptyData(){return{customers:[],stock:[],jobs:[],bills:[],expenses:[],staff:[],attendance:[],suppliers:[],purchases:[],salaryPayments:[],billPayments:[],settings:{theme:'frosted'}}}
 function load(){
   var d={};
   try{d=JSON.parse(localStorage.getItem(KEY)||'{}')||{}}catch(e){d={}}
@@ -511,6 +511,8 @@ function normalize(d){
   return out;
 }
 var data=load();
+/* Version 4.0 first-run migration: set Frosted Glass as the default once, while keeping all themes selectable. */
+if(!data.settings.carvoxV4ThemeDefault){data.settings.theme='frosted';data.settings.carvoxV4ThemeDefault=true;try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){}}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){showErr('Storage is full or blocked. Export a backup.')}}
 function persist(){save();render()}
 var KEYMAP={customer:'customers',stock:'stock',bill:'bills',expense:'expenses',staff:'staff',attendance:'attendance',supplier:'suppliers',purchase:'purchases',salary:'salaryPayments',billpay:'billPayments'};
@@ -613,7 +615,7 @@ function addBtn(label,fn){return '<button class="primary sm" onclick="'+fn+'">'+
 function empty(msg){return '<div class="empty">'+msg+'</div>'}
 
 /* ================= form engine ================= */
-var CATS=['ALIGNMENT','BALANCING','DENTING','PAINTING','REPAIRS','WASHING','ELECTRICAL WORK','AC WORK','OTHER'];
+var CATS=['ALIGNMENT','BALANCING','DENTING','PAINTING','REPAIRS','WASHING','ELECTRICAL WORK','AC WORK','INSURANCE','OTHER'];
 var MODES=['Cash','UPI','Bank transfer','Card','Cheque','Other'];
 function F(k,l,t,o,x){return Object.assign({k:k,l:l,t:t||'text',o:o},x||{})}
 var SCHEMA={
@@ -777,6 +779,8 @@ function openBill(id,pre){
   customs=Array.isArray(old.customItems)?old.customItems.map(function(x){return Object.assign({},x)}):[];
   var v=function(k,d){return old[k]!=null?old[k]:(pre[k]!=null?pre[k]:(d!=null?d:''))};
   var svc=old.serviceCharge!==undefined?old.serviceCharge:((id&&!parts.length&&!customs.length)?num(old.amount):0);
+  var selectedCategories=String(v('category','')).split(/\\s*,\\s*/).filter(Boolean);
+  var categoryChecks='<div class="full"><label>Service category <span class="note">(Select multiple)</span></label><div id="b_category" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">'+CATS.map(function(c){return '<label style="display:flex;align-items:center;gap:9px;padding:11px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);font-size:.86rem;font-weight:600"><input type="checkbox" class="b_category_option" value="'+esc(c)+'"'+(selectedCategories.indexOf(c)>=0?' checked':'')+' style="width:18px;height:18px;accent-color:var(--accent)"> '+esc(c)+'</label>'}).join('')+'</div></div>';
   var custOpts='<option value="">Pick a saved customer (optional)</option>'+data.customers.map(function(c){return '<option value="'+c.id+'">'+esc(c.name||'Customer')+(c.vehicle?' · '+esc(c.vehicle):'')+'</option>'}).join('');
   var stockOpts='<option value="">Choose item from stock</option>'+data.stock.map(function(s){return '<option value="'+s.id+'">'+esc(s.name||s.partNo||'Part')+' · '+num(s.qty)+' left · '+money(s.sell)+'</option>'}).join('');
   var h=sheetHead(id?'Edit bill':'New bill')+'<form id="bf" autocomplete="off">'+
@@ -785,7 +789,7 @@ function openBill(id,pre){
    '<div class="full"><label>Customer name</label><input id="b_customer" value="'+esc(v('customer'))+'"></div>'+
    '<div><label>Phone</label><input id="b_phone" type="tel" value="'+esc(v('phone'))+'"></div><div><label>Vehicle</label><input id="b_vehicle" value="'+esc(v('vehicle'))+'"></div>'+
    '<div class="full"><label>Registration number</label><input id="b_reg" value="'+esc(v('reg'))+'"></div>'+
-   '<div class="full"><label>Service category</label><select id="b_category"><option value="">Choose…</option>'+CATS.map(function(c){return '<option'+(v('category')===c?' selected':'')+'>'+c+'</option>'}).join('')+'</select></div>'+
+   categoryChecks+
    '<div class="full"><label>Service / labour details</label><textarea id="b_description" rows="2">'+esc(v('description'))+'</textarea></div>'+
    '<div class="full"><label>Service / labour charge (₹)</label><input id="b_serviceCharge" type="number" step="any" inputmode="decimal" min="0" value="'+esc(svc)+'"></div></div>'+
    '<h3>Stock parts used</h3><div class="sel"><select id="b_stock">'+stockOpts+'</select><input id="b_sqty" type="number" min="1" value="1" style="width:76px"><button type="button" class="primary sm" onclick="CX.addPart()">Add</button></div>'+
@@ -843,7 +847,7 @@ function saveBill(){
   var obj={
     billNo:$('#b_billNo').value.trim(),date:$('#b_date').value||today(),
     customer:$('#b_customer').value.trim(),phone:$('#b_phone').value.trim(),vehicle:$('#b_vehicle').value.trim(),reg:$('#b_reg').value.trim(),
-    category:$('#b_category').value,description:$('#b_description').value.trim(),
+    category:Array.prototype.slice.call(document.querySelectorAll('.b_category_option:checked')).map(function(x){return x.value}).join(', '),description:$('#b_description').value.trim(),
     serviceCharge:num($('#b_serviceCharge').value),items:parts.map(function(x){return Object.assign({},x)}),customItems:customs.map(function(x){return Object.assign({},x)}),
     paymentMode:$('#b_mode').value,profit:num($('#b_profit').value)
   };
@@ -865,7 +869,7 @@ function waNumber(p){var d=String(p||'').replace(/\D/g,'');if(d.length===10)d='9
 function invoiceText(b){
   var s=data.settings,t=(s.garageName||'CarvoX')+'\n'+(s.garagePhone?'Ph: '+s.garagePhone+'\n':'')+(s.garageAddress?s.garageAddress+'\n':'')+'\n';
   t+='Invoice: '+(b.billNo||'-')+'\nDate: '+(b.date||'')+'\nCustomer: '+(b.customer||'-')+(b.vehicle?'\nVehicle: '+b.vehicle+(b.reg?' ('+b.reg+')':''):'')+'\n';
-  if(b.category)t+='Service: '+b.category+'\n';
+  if(b.category)t+='Service(s): '+b.category+'\n';
   t+='\n';
   if(num(b.serviceCharge))t+='Labour/service: '+money(b.serviceCharge)+'\n';
   billItems(b).forEach(function(i){t+=(i.name||'Item')+' x'+num(i.qty||1)+' = '+money(num(i.qty||1)*num(i.price))+'\n'});
@@ -1024,75 +1028,146 @@ function blobToBase64(blob){
 }
 function showInvoiceImagePreview(blob,fileName,title){
   var objectUrl=URL.createObjectURL(blob);
+  window.__cxInvoicePreviewBlob=blob;
+  window.__cxInvoicePreviewName=fileName;
   var h=sheetHead(title||'Invoice image ready')+
     '<div style="background:#fff;border-radius:16px;padding:8px;text-align:center"><img src="'+esc(objectUrl)+'" alt="CarvoX invoice" style="display:block;width:100%;height:auto;max-height:55vh;object-fit:contain;border-radius:10px"></div>'+
-    '<p class="note">The invoice image is ready. Save the PNG, then share it from your phone if the sharing panel is unavailable.</p>'+
-    '<div class="actions"><a class="btn primary" style="flex:1" href="'+esc(objectUrl)+'" download="'+esc(fileName)+'">'+ic('download',18)+'Download PNG</a><button onclick="CX.close()">Done</button></div>';
+    '<p class="note">Invoice PNG is ready. Use Download PNG to save it to Downloads, then share it from Files/Gallery.</p>'+
+    '<div class="actions"><button class="primary" style="flex:1" onclick="downloadInvoicePreview()">'+ic('download',18)+' Download PNG</button><button onclick="CX.close()">Done</button></div>';
   openSheet(h);
   setTimeout(function(){try{URL.revokeObjectURL(objectUrl)}catch(e){}},120000);
 }
-async function downloadBill(id){
-  var b=byId(data.bills,id);if(!b)return;
-  var fileName='CarvoX-Invoice.png';
+async function downloadInvoicePreview(){
+  var blob=window.__cxInvoicePreviewBlob,fileName=window.__cxInvoicePreviewName||'CarvoX-Invoice.png';
+  if(!blob){toast('Invoice image is no longer available. Reopen the bill and try again.');return}
   try{
-    toast('Preparing invoice image…');
-    var canvas=await renderInvoiceCanvas(b);
-    var blob=await canvasToBlob(canvas);
-    var cleanNo=String(b.billNo||'Invoice').replace(/[^a-z0-9_-]/gi,'_');
-    fileName='CarvoX-'+cleanNo+'.png';
-    var url=URL.createObjectURL(blob);
-    var a=document.createElement('a');a.href=url;a.download=fileName;a.style.display='none';
-    document.body.appendChild(a);a.click();a.remove();
-    setTimeout(function(){try{URL.revokeObjectURL(url)}catch(e){}},60000);
-    toast('Invoice PNG download started');
+    var result=await saveInvoiceImageBlob(blob,fileName);
+    toast(result.method==='native-download'?'Saved to Downloads/CarvoX':'Invoice PNG saved/download started');
   }catch(e){
-    console.error('CarvoX invoice download error:',e);
-    toast('Could not download invoice image: '+(e&&e.message?e.message:'Please try again.'));
+    console.error('Preview PNG download error:',e);
+    toast('Could not download PNG: '+(e&&e.message?e.message:'Please try again.'));
   }
 }
 
+async function saveInvoiceImageBlob(blob,fileName){
+  var base64=await blobToBase64(blob),cap=window.Capacitor;
+  /* Native Android/iOS: FileSharer.save writes to the public Downloads collection on Android. */
+  if(cap&&cap.isNativePlatform&&cap.isNativePlatform()){
+    var fsaver=nativePlugin('FileSharer');
+    if(fsaver&&typeof fsaver.save==='function'){
+      var result=await fsaver.save({
+        filename:fileName,
+        contentType:'image/png',
+        base64Data:base64,
+        android:{saveDirectory:'downloads',relativePath:'CarvoX'}
+      });
+      return {saved:true,uri:result&&result.uri||null,method:'native-download'};
+    }
+    /* Legacy fallback: save to app Documents, then offer the Android share/save sheet. */
+    var fs=nativePlugin('Filesystem');
+    if(fs&&typeof fs.writeFile==='function'){
+      var saved=await fs.writeFile({path:'CarvoX/'+fileName,data:base64,directory:'DOCUMENTS',encoding:'base64',recursive:true});
+      var sh=nativePlugin('Share');
+      if(sh&&typeof sh.share==='function'){
+        await sh.share({title:'CarvoX invoice PNG',url:saved.uri,dialogTitle:'Save or share invoice'});
+        return {saved:true,uri:saved.uri,method:'documents-share'};
+      }
+      return {saved:true,uri:saved.uri,method:'app-documents'};
+    }
+    throw new Error('Native file-saving plugin is missing. Add @capgo/capacitor-file-sharer and run npx cap sync, then rebuild the APK.');
+  }
+  /* Browser / Chrome: use the File Sharer web implementation when installed, otherwise download anchor. */
+  var webSaver=nativePlugin('FileSharer');
+  if(webSaver&&typeof webSaver.save==='function'){
+    await webSaver.save({filename:fileName,contentType:'image/png',base64Data:base64});
+    return {saved:true,method:'browser-plugin'};
+  }
+  var url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=fileName;a.style.display='none';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(function(){try{URL.revokeObjectURL(url)}catch(e){}},120000);
+  return {saved:true,method:'browser-download'};
+}
+async function downloadBill(id){
+  var b=byId(data.bills,id);if(!b)return;
+  try{
+    toast('Preparing invoice PNG…');
+    var canvas=await renderInvoiceCanvas(b),blob=await canvasToBlob(canvas);
+    var cleanNo=String(b.billNo||'Invoice').replace(/[^a-z0-9_-]/gi,'_');
+    var fileName='CarvoX-'+cleanNo+'.png';
+    var result=await saveInvoiceImageBlob(blob,fileName);
+    if(result.method==='native-download'){
+      toast('Invoice saved to Downloads/CarvoX');
+    }else if(result.method==='documents-share'){
+      toast('Invoice saved. Share/Save sheet opened.');
+    }else if(result.method==='app-documents'){
+      toast('Invoice saved in CarvoX app Documents');
+    }else{
+      toast('Invoice PNG download started');
+    }
+    showInvoiceImagePreview(blob,fileName,'Invoice PNG ready');
+  }catch(e){
+    console.error('CarvoX invoice download error:',e);
+    toast('Download failed: '+(e&&e.message?e.message:'Please try again.'));
+    try{
+      var canvas2=await renderInvoiceCanvas(b),blob2=await canvasToBlob(canvas2);
+      showInvoiceImagePreview(blob2,'CarvoX-'+String(b.billNo||'Invoice').replace(/[^a-z0-9_-]/gi,'_')+'.png','Invoice image ready');
+    }catch(previewError){console.error('Invoice preview fallback failed:',previewError)}
+  }
+}
 async function printBill(id){
   var b=byId(data.bills,id);if(!b)return;
-  var pa=$('#printArea');if(!pa){toast('Print area is unavailable');return;}
-  var cleaned=false,printTimer=null;
-  var done=function(){
-    if(cleaned)return;cleaned=true;
-    document.body.classList.remove('printing');
-    pa.innerHTML='';
-    window.removeEventListener('afterprint',done);
-    if(printTimer)clearTimeout(printTimer);
-  };
   try{
-    toast('Preparing print-ready invoice…');
-    var canvas=await renderInvoiceCanvas(b);
-    var imageUrl=canvas.toDataURL('image/png');
-    pa.innerHTML='<img class="invoice-print-image" alt="CarvoX invoice '+esc(b.billNo||'')+'" src="'+imageUrl+'" style="display:block;width:100%;height:auto">';
-    document.body.classList.add('printing');
-    window.addEventListener('afterprint',done,{once:true});
-    // The print document now contains the exact invoice artwork as a PNG, not plain text.
-    setTimeout(function(){
-      try{
-        if(typeof window.print==='function'){
-          window.focus();window.print();
-          // Some Android WebViews do not emit afterprint. Keep the print image until the dialog has time to open.
-          printTimer=setTimeout(done,45000);
-        }else{
-          done();
-          var blobUrl=canvas.toDataURL('image/png');
-          showInvoiceImagePreview(dataUrlToBlob(blobUrl),'CarvoX-'+String(b.billNo||'Invoice')+'.png','Print-ready invoice');
-          toast('Print is unavailable here. Download the invoice PNG and print it from your phone.');
+    toast('Preparing invoice for printing…');
+    var canvas=await renderInvoiceCanvas(b),imageUrl=canvas.toDataURL('image/png');
+    var fileName='CarvoX-'+String(b.billNo||'Invoice').replace(/[^a-z0-9_-]/gi,'_')+'.png';
+    var base64=String(imageUrl).split(',')[1]||'';
+    var cap=window.Capacitor;
+    if(cap&&cap.isNativePlatform&&cap.isNativePlatform()){
+      /* Native Printer plugin uses Android PrintManager and shows the real system print dialog. */
+      var pr=nativePlugin('Printer')||nativePlugin('CapacitorPrinter')||nativePlugin('Print');
+      if(pr){
+        if(typeof pr.printBase64==='function'){
+          await pr.printBase64({name:'CarvoX Invoice '+(b.billNo||''),data:base64,mimeType:'image/png'});
+          toast('Android print dialog opened');
+          return;
         }
-      }catch(printError){
-        done();
-        console.error('CarvoX print error:',printError);
-        try{showInvoiceImagePreview(dataUrlToBlob(imageUrl),'CarvoX-'+String(b.billNo||'Invoice')+'.png','Print-ready invoice')}catch(ignore){}
-        toast('Print could not open. The print-ready invoice image is available.');
+        if(typeof pr.printHtml==='function'){
+          await pr.printHtml({name:'CarvoX Invoice '+(b.billNo||''),html:invoiceHTML(b)});
+          toast('Android print dialog opened');
+          return;
+        }
+        if(typeof pr.print==='function'){
+          await pr.print({name:'CarvoX Invoice '+(b.billNo||''),html:invoiceHTML(b)});
+          toast('Print dialog opened');
+          return;
+        }
       }
-    },350);
+      throw new Error('Native Printer plugin is not installed. Add @capawesome-team/capacitor-printer and run npx cap sync, then rebuild the APK.');
+    }
+    /* Browser Chrome fallback: open the invoice-only print view. */
+    var pa=$('#printArea');
+    if(pa&&typeof window.print==='function'){
+      var cleaned=false,timer=null;
+      var done=function(){if(cleaned)return;cleaned=true;document.body.classList.remove('printing');pa.innerHTML='';window.removeEventListener('afterprint',done);if(timer)clearTimeout(timer)};
+      pa.innerHTML='<img class="invoice-print-image" alt="CarvoX invoice '+esc(b.billNo||'')+'" src="'+imageUrl+'" style="display:block;width:100%;height:auto">';
+      document.body.classList.add('printing');window.addEventListener('afterprint',done,{once:true});
+      setTimeout(function(){
+        try{window.focus();window.print();timer=setTimeout(done,45000)}
+        catch(printErr){done();console.error(printErr);showInvoiceImagePreview(dataUrlToBlob(imageUrl),fileName,'Print-ready invoice');toast('Print dialog unavailable. Download the invoice PNG to print.')}
+      },250);
+      setTimeout(function(){if(!cleaned){done();showInvoiceImagePreview(dataUrlToBlob(imageUrl),fileName,'Print-ready invoice');toast('If print dialog did not open, download the PNG and print from Files.')}},4000);
+      return;
+    }
+    showInvoiceImagePreview(dataUrlToBlob(imageUrl),fileName,'Print-ready invoice');
+    toast('Browser print unavailable. Download the invoice PNG and print it from Files.');
   }catch(e){
-    done();
-    console.error('CarvoX print preparation error:',e);
-    toast('Could not prepare invoice for printing: '+(e&&e.message?e.message:'Please try again.'));
+    console.error('CarvoX print error:',e);
+    toast('Print unavailable: '+(e&&e.message?e.message:'Download invoice PNG to print.'));
+    try{
+      var canvasFallback=await renderInvoiceCanvas(b);
+      showInvoiceImagePreview(await canvasToBlob(canvasFallback),'CarvoX-'+String(b.billNo||'Invoice').replace(/[^a-z0-9_-]/gi,'_')+'.png','Print-ready invoice');
+    }catch(previewError){console.error('Print preview fallback failed:',previewError)}
   }
 }
 function dataUrlToBlob(dataUrl){
@@ -1485,12 +1560,12 @@ function showLock(){
 function about(){
   openSheet(sheetHead('CarvoX '+VERSION)+
     '<h3 style="margin-top:4px">Latest updates</h3><ul style="padding-left:20px;line-height:1.7;color:var(--muted);margin:0">'+
-    '<li>New Frosted Glass / Minimal theme: monochrome Nothing-inspired styling, translucent blur surfaces and a floating glass navigation bar.</li>'+ 
+    '<li>Version 4.0: Frosted Glass / Minimal is now the default theme with monochrome Nothing-inspired styling, translucent blur surfaces and floating glass navigation.</li>'+ 
     '<li>Electric Blue, Midnight and Light themes remain available and unchanged.</li>'+ 
     '<li>Monthly Profit &amp; Loss now shows Earnings, Profit, Expenses and Net.</li>'+
-    '<li>Invoices can be shared as a complete PNG image using the phone sharing panel.</li>'+ 
-    '<li>Print uses the same designed invoice artwork, including the garage logo and payment summary.</li>'+ 
-    '<li>Invoice image action now downloads a ready-to-save PNG directly to your device.</li>'+ 
+    '<li>Invoice Download Image now generates a PNG with native file-save and browser fallback support.</li>'+ 
+    '<li>Print invoice now uses the designed invoice artwork with WebView/native print support and a print-ready PNG fallback.</li>'+ 
+    '<li>Frosted Glass is selected automatically on the first launch after this update; other themes remain available in Settings.</li>'+ 
     '</ul><h3>App features</h3><ul style="padding-left:20px;line-height:1.7;color:var(--muted);margin:0">'+
     '<li>Dashboard with daily earnings, expenses, profit, bills and pending dues.</li>'+ 
     '<li>Stock management, suppliers and stock purchase records.</li>'+ 
