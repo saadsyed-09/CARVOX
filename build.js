@@ -28,15 +28,6 @@ if (logo) {
   console.log('CarvoX logo PNG not found - built-in logo will be used.');
 }
 
-
-// Runtime app logo (header) and invoice logo. Keep both paths available in the WebView.
-const appLogo = find('icon.png');
-if (appLogo) {
-  fs.mkdirSync('www/assets', { recursive: true });
-  fs.copyFileSync(appLogo, 'www/assets/icon.png');
-  console.log('App icon copied from ' + appLogo);
-}
-
 // Optional garage background -> www/garage-bg.png
 const bg = find('garage-bg.png');
 if (bg) {
