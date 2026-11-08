@@ -20,10 +20,11 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
@@ -34,7 +35,7 @@ jobs:
       - name: Install project dependencies
         run: npm install
 
-      - name: Prepare CarvoX logo
+      - name: Prepare CARVOX logo
         run: |
           mkdir -p assets
 
@@ -42,15 +43,15 @@ jobs:
             if [ -f assets/carvox-logo.png ]; then
               cp assets/carvox-logo.png assets/icon.png
             else
-              echo "ERROR: CARVOX logo is missing!"
+              echo "ERROR: CARVOX logo missing"
               exit 1
             fi
           fi
 
-      - name: Build CarvoX web assets
+      - name: Build CARVOX web assets
         run: npm run build
 
-      - name: Add Android platform
+      - name: Add Android platform if missing
         run: |
           if [ ! -d android ]; then
             npx cap add android
@@ -65,7 +66,7 @@ jobs:
       - name: Sync Capacitor plugins
         run: npx cap sync android
 
-      - name: Build debug APK
+      - name: Build CARVOX APK
         run: |
           cd android
           chmod +x gradlew
