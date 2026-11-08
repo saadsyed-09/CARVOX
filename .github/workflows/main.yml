@@ -1,3 +1,4 @@
+
 name: CARVOX APK
 run-name: CARVOX APK
 
@@ -19,12 +20,12 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Set up Java 21
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -33,32 +34,35 @@ jobs:
       - name: Install project dependencies
         run: npm install
 
-      - name: Install native printing plugin (Capacitor 7)
-        run: npm install --save-exact @capgo/capacitor-printer@7.0.14
-
       - name: Prepare CarvoX logo
         run: |
           mkdir -p assets
-          if [ -f assets/icon.png ]; then
-            cp assets/icon.png assets/carvox-logo.png
-          elif [ ! -f assets/carvox-logo.png ]; then
-            echo "ERROR: assets/icon.png or assets/carvox-logo.png is required."
-            exit 1
+
+          if [ ! -f assets/icon.png ]; then
+            if [ -f assets/carvox-logo.png ]; then
+              cp assets/carvox-logo.png assets/icon.png
+            else
+              echo "ERROR: CARVOX logo is missing!"
+              exit 1
+            fi
           fi
 
       - name: Build CarvoX web assets
         run: npm run build
 
-      - name: Install Capacitor asset generator
-        run: npm install --save-dev @capacitor/assets
-
       - name: Add Android platform
-        run: npx cap add android
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
 
-      - name: Generate Android app icon and splash assets
-        run: npx @capacitor/assets generate --android --iconBackgroundColor '#061326' --splashBackgroundColor '#061326'
+      - name: Generate Android launcher assets
+        run: |
+          npx @capacitor/assets generate --android \
+            --iconBackgroundColor '#061326' \
+            --splashBackgroundColor '#061326'
 
-      - name: Sync Capacitor Android project
+      - name: Sync Capacitor plugins
         run: npx cap sync android
 
       - name: Build debug APK
