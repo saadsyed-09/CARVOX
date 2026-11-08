@@ -1,5 +1,4 @@
 name: CARVOX APK
-run-name: CARVOX APK
 
 on:
   workflow_dispatch:
@@ -11,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  android:
+  build:
     name: Build CARVOX Android APK
     runs-on: ubuntu-latest
 
@@ -30,38 +29,13 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - name: Install project dependencies
+      - name: Install dependencies
         run: npm install
 
-      - name: Locate and prepare CARVOX logo
-        shell: bash
-        run: |
-          echo "Repository root:"
-          pwd
+      - name: Ensure TypeScript is installed
+        run: npm install --save-dev typescript
 
-          echo "Assets directory:"
-          ls -la assets || true
-
-          LOGO_PATH=$(find assets -maxdepth 1 -type f -iname 'icon.png' -print -quit)
-
-          if [ -z "$LOGO_PATH" ]; then
-            echo "ERROR: icon.png not found"
-            echo "Available image files:"
-            find assets -maxdepth 2 -type f
-            exit 1
-          fi
-
-          echo "Logo located: $LOGO_PATH"
-
-          cp "$LOGO_PATH" /tmp/carvox-icon.png
-          mkdir -p assets
-          cp /tmp/carvox-icon.png assets/icon.png
-
-          echo "Final logo:"
-          ls -l assets/icon.png
-          file assets/icon.png
-
-      - name: Build CARVOX web assets
+      - name: Build web assets
         run: npm run build
 
       - name: Add Android platform if missing
@@ -73,10 +47,10 @@ jobs:
       - name: Generate Android launcher assets
         run: |
           npx @capacitor/assets generate --android \
-            --iconBackgroundColor '#061326' \
-            --splashBackgroundColor '#061326'
+            --iconBackgroundColor '#07111f' \
+            --splashBackgroundColor '#07111f'
 
-      - name: Sync Capacitor plugins
+      - name: Sync Capacitor
         run: npx cap sync android
 
       - name: Build CARVOX APK
