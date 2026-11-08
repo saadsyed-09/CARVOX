@@ -1,14 +1,24 @@
-# CarvoX - Smart Garage Manager (v3.0)
+# CARVOX 4.0 — Capacitor 8 Download + Print build fix
 
-Premium blue mobile garage management app, packaged with Capacitor for Android.
+## Why the previous workflow failed
+The previous dependency `@capgo/capacitor-file-sharer@^7.0.0` could not be resolved from npm (ETARGET). This pack uses the published Capgo v8 plugin releases and upgrades the Capacitor packages together to v8.
 
-Modules: Dashboard, Stock (+ suppliers & purchases), Billing (invoice, WhatsApp, partial payments),
-Customers (+ history), Staff (+ attendance calendar, salary), Expenses, Reports (charts, monthly P&L),
-Settings (garage profile, themes, wallpaper, PIN lock, backup/restore).
+## Replace these files in your GitHub repository
+1. `package.json`
+2. `.github/workflows/main.yml`
 
-Your records are stored on the phone (same storage key as earlier versions, so existing data is kept).
+Keep your existing `build.js` as-is. The screenshot shows it correctly copies `index.html` into `www/index.html` and copies the logo/background assets.
 
-## Build the APK
-1. Upload these files to the repo root (keep `.github/workflows/main.yml`).
-2. Keep your logo at `assets/assets/carvox-logo.png` (optional `garage-bg.png` in the root).
-3. Actions -> CarvoX APK -> Run workflow (branch main). Download the CarvoX-APK artifact when it finishes.
+## Required existing files
+- `index.html` (use your latest CARVOX 4.0 Download/Print HTML)
+- `build.js`
+- `capacitor.config.ts` with the existing app ID and `webDir: "www"`
+- `assets/carvox-logo.png` or `assets/icon.png`
+
+## After committing
+1. GitHub → Actions → CARVOX APK → Run workflow.
+2. Download the `CARVOX-APK` artifact.
+3. Install/test on Android.
+4. Test invoice Download and Print on-device.
+
+Note: this pack fixes the dependency/build configuration. It cannot claim the physical APK's print/download behavior is device-tested until you install and test the generated APK.
