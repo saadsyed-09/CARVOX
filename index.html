@@ -132,6 +132,8 @@ button:active{transform:scale(.97)}
 .qa button .ib{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:var(--card2);color:var(--accent2)}
 .qa button.primary .ib{background:rgba(255,255,255,.2);color:#fff}
 .list{display:flex;flex-direction:column;gap:10px}
+/* Keep the exact row styling, but let Chromium defer off-screen list row painting. */
+.list>.item{content-visibility:auto;contain-intrinsic-size:auto 88px}
 .item{display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:12px;cursor:pointer;
   backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .item:active{background:var(--card2)}
@@ -512,8 +514,59 @@ function normalize(d){
 }
 var data=load();
 /* Version 4.0 first-run migration: set Frosted Glass as the default once, while keeping all themes selectable. */
-if(!data.settings.carvoxV4ThemeDefault){data.settings.theme='frosted';data.settings.carvoxV4ThemeDefault=true;try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){}}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){showErr('Storage is full or blocked. Export a backup.')}}
+if(!data.settings.carvoxV4ThemeDefault){
+  /* Keep the Frosted Glass default, but avoid a full localStorage rewrite
+     during first paint. The flag is saved on the next normal user save. */
+  data.settings.theme='frosted';
+  data.settings.carvoxV4ThemeDefault=true;
+}
+var DATA_INDEX_CACHE=null,BILL_OPTION_CACHE=null,REF_OPTION_CACHE=Object.create(null);
+function invalidateDataIndexes(){DATA_INDEX_CACHE=null;BILL_OPTION_CACHE=null;REF_OPTION_CACHE=Object.create(null)}
+function dataIndexes(){
+  if(DATA_INDEX_CACHE)return DATA_INDEX_CACHE;
+  var ix={
+    paymentsByBill:Object.create(null),paymentsByDate:Object.create(null),
+    billsByDate:Object.create(null),expensesByDate:Object.create(null),
+    billsByMonth:Object.create(null),expensesByMonth:Object.create(null),
+    receivedByDate:Object.create(null),billsByCustomerName:Object.create(null),
+    billsByCustomerPhone:Object.create(null),allDue:0,totalBilled:0,totalExpenses:0
+  };
+  var i,x,k,m,n,p;
+  for(i=0;i<data.billPayments.length;i++){
+    p=data.billPayments[i];
+    if(p.billId)ix.paymentsByBill[p.billId]=(ix.paymentsByBill[p.billId]||0)+num(p.amount);
+    if(p.date){
+      (ix.paymentsByDate[p.date]||(ix.paymentsByDate[p.date]=[])).push(p);
+    }
+  }
+  for(i=0;i<data.bills.length;i++){
+    x=data.bills[i];k=x.date||'';m=k.slice(0,7);
+    if(k)(ix.billsByDate[k]||(ix.billsByDate[k]=[])).push(x);
+    if(m)(ix.billsByMonth[m]||(ix.billsByMonth[m]=[])).push(x);
+    ix.totalBilled+=num(x.amount);ix.allDue+=Math.max(0,num(x.balance));
+    if(k)ix.receivedByDate[k]=(ix.receivedByDate[k]||0)+Math.max(0,num(x.paid)-(ix.paymentsByBill[x.id]||0));
+    n=lc(x.customer).trim();if(n)(ix.billsByCustomerName[n]||(ix.billsByCustomerName[n]=[])).push(x);
+    if(x.phone){p=String(x.phone);(ix.billsByCustomerPhone[p]||(ix.billsByCustomerPhone[p]=[])).push(x)}
+  }
+  for(i=0;i<data.billPayments.length;i++){
+    p=data.billPayments[i];if(p.date)ix.receivedByDate[p.date]=(ix.receivedByDate[p.date]||0)+num(p.amount);
+  }
+  for(i=0;i<data.expenses.length;i++){
+    x=data.expenses[i];k=x.date||'';m=k.slice(0,7);ix.totalExpenses+=num(x.amount);
+    if(k)(ix.expensesByDate[k]||(ix.expensesByDate[k]=[])).push(x);
+    if(m)(ix.expensesByMonth[m]||(ix.expensesByMonth[m]=[])).push(x);
+  }
+  DATA_INDEX_CACHE=ix;return ix;
+}
+function billOptionHtml(){
+  if(BILL_OPTION_CACHE)return BILL_OPTION_CACHE;
+  var cust='<option value="">Pick a saved customer (optional)</option>';
+  for(var i=0;i<data.customers.length;i++){var c=data.customers[i];cust+='<option value="'+esc(c.id)+'">'+esc(c.name||'Customer')+(c.vehicle?' · '+esc(c.vehicle):'')+'</option>'}
+  var stock='<option value="">Choose item from stock</option>';
+  for(var j=0;j<data.stock.length;j++){var item=data.stock[j];stock+='<option value="'+esc(item.id)+'">'+esc(item.name||item.partNo||'Part')+' · '+num(item.qty)+' left · '+money(item.sell)+'</option>'}
+  BILL_OPTION_CACHE={customers:cust,stock:stock};return BILL_OPTION_CACHE;
+}
+function save(){invalidateDataIndexes();try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){showErr('Storage is full or blocked. Export a backup.')}}
 function persist(){save();render()}
 var KEYMAP={customer:'customers',stock:'stock',bill:'bills',expense:'expenses',staff:'staff',attendance:'attendance',supplier:'suppliers',purchase:'purchases',salary:'salaryPayments',billpay:'billPayments'};
 
@@ -527,17 +580,24 @@ function bgState(){
   if(s==='custom'&&!c)s='cars';
   return{s:s,o:num(o),c:c};
 }
-function applyLook(){
-  var activeTheme=themeName();
+var appliedLookSignature=null;
+function applyLook(force){
+  var activeTheme=themeName(),b=bgState(),fontScale=num(data.settings.fontScale)||1;
+  var img='none';
+  if(b.s==='cars')img='url("garage-bg.png")';else if(b.s==='custom')img='url("'+b.c+'")';
+  var signature=[activeTheme,fontScale,b.s,b.o,b.c].join('|');
+  if(!force&&signature===appliedLookSignature)return;
   document.body.setAttribute('data-theme',activeTheme);
   var metaTheme=document.querySelector('meta[name="theme-color"]');
   if(metaTheme)metaTheme.setAttribute('content',activeTheme==='frosted'?'#080808':activeTheme==='midnight'?'#000000':activeTheme==='light'?'#eef4ff':'#040a16');
-  document.documentElement.style.fontSize=(16*(num(data.settings.fontScale)||1))+'px';
-  var b=bgState(),L=$('#bgLayer'),img='none';
-  if(b.s==='cars')img='url("garage-bg.png")';else if(b.s==='custom')img='url("'+b.c+'")';
-  L.style.backgroundImage=img;
-  /* Keep wallpapers subtle in the monochrome glass theme without disabling its control. */
-  L.style.opacity=String(Math.max(0,Math.min(1,b.o/100))*(activeTheme==='frosted'?0.22:0.6));
+  document.documentElement.style.fontSize=(16*fontScale)+'px';
+  var L=$('#bgLayer');
+  if(L){
+    if(L.style.backgroundImage!==img)L.style.backgroundImage=img;
+    var opacity=String(Math.max(0,Math.min(1,b.o/100))*(activeTheme==='frosted'?0.22:0.6));
+    if(L.style.opacity!==opacity)L.style.opacity=opacity;
+  }
+  appliedLookSignature=signature;
 }
 
 /* ================= sheets (with Android back support) ================= */
@@ -573,21 +633,36 @@ function ask(msg,label,fn,danger){
 var page='home',search={};
 var NAV=[['home','home','Home'],['stock','box','Stock'],['bills','receipt','Bills'],['customers','users','Customers'],['staff','idcard','Staff'],['expenses','wallet','Expenses'],['reports','chart','Reports']];
 function go(p){page=p;closeAll();render();window.scrollTo(0,0)}
+var navIsBuilt=false;
 function renderNav(){
-  $('#nav').innerHTML=NAV.map(function(n){return '<button class="'+(page===n[0]?'on':'')+'" onclick="CX.go(\''+n[0]+'\')">'+ic(n[1],21)+n[2]+'</button>'}).join('');
+  var el=$('#nav');if(!el)return;
+  if(!navIsBuilt){
+    el.innerHTML=NAV.map(function(n){return '<button data-page="'+n[0]+'" onclick="CX.go(\''+n[0]+'\')">'+ic(n[1],21)+n[2]+'</button>'}).join('');
+    navIsBuilt=true;
+  }
+  var buttons=el.children;
+  for(var i=0;i<buttons.length;i++){
+    var active=buttons[i].getAttribute('data-page')===page;
+    buttons[i].classList.toggle('on',active);
+  }
 }
 var FALLBACK_LOGO='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#7fc4ff"/><stop offset="1" stop-color="#1768d4"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="#061326"/><rect x="24" y="24" width="464" height="464" rx="96" fill="url(#g)" opacity=".18" stroke="#6fbaff" stroke-width="8"/><path d="M310 145a126 126 0 1 0 0 222" fill="none" stroke="#eaf5ff" stroke-width="48" stroke-linecap="round"/><path d="M328 164v184M328 256h112" fill="none" stroke="#4b9cff" stroke-width="42" stroke-linecap="round"/></svg>');
 function renderHeader(){
-  var s=data.settings;
-  $('#gname').textContent=(s.garageName||'').trim()||'Smart Garage Manager';
-  var m=$('#mark');
-  var src=s.garageLogo||'assets/carvox-logo.png';
-  m.innerHTML='<img alt="Logo">';
-  var im=$('img',m);
-  im.addEventListener('error',function(){im.onerror=null;im.src=FALLBACK_LOGO},{once:true});
-  im.src=src;
-  $('#hInfo').innerHTML=ic('info',20);
-  $('#hSet').innerHTML=ic('gear',20);
+  var s=data.settings,garageName=(s.garageName||'').trim()||'Smart Garage Manager';
+  var nameEl=$('#gname');if(nameEl&&nameEl.textContent!==garageName)nameEl.textContent=garageName;
+  var m=$('#mark'),src=s.garageLogo||'assets/icon.png';
+  if(m){
+    var im=$('img',m);
+    if(!im){m.innerHTML='<img alt="Logo" decoding="async">';im=$('img',m);}
+    if(m._carvoxLogoSource!==src){
+      m._carvoxLogoSource=src;
+      im.onerror=function(){im.onerror=null;im.src=FALLBACK_LOGO};
+      im.src=src;
+    }
+  }
+  var info=$('#hInfo'),settings=$('#hSet');
+  if(info&&!info.firstChild)info.innerHTML=ic('info',20);
+  if(settings&&!settings.firstChild)settings.innerHTML=ic('gear',20);
 }
 function render(){
   try{applyLook()}catch(e){showErr('Appearance: '+(e&&e.message?e.message:e))}
@@ -604,7 +679,7 @@ function render(){
   }
 }
 function setSearch(name,v){
-  search[name]=v;
+  search[name]=v;listLimits[name]=LIST_PAGE_SIZE;
   var el=$('#list-'+name);
   if(el&&LISTS[name])el.innerHTML=LISTS[name]();
 }
@@ -630,11 +705,13 @@ var SCHEMA={
  billpay:{title:'Receive payment',fields:[F('billId','Bill','ref:bill',0,{req:1,full:1}),F('amount','Amount received (₹)','number',0,{req:1}),F('date','Payment date','date'),F('mode','Payment mode','select',MODES),F('notes','Notes','textarea',0,{full:1})]}
 };
 function refOptions(t){
-  if(t==='ref:stock')return data.stock.map(function(x){return{v:x.id,l:(x.name||x.partNo||'Item')+' · '+num(x.qty)+' left'}});
-  if(t==='ref:staff')return data.staff.map(function(x){return{v:x.id,l:x.name||'Staff'}});
-  if(t==='ref:supplier')return data.suppliers.map(function(x){return{v:x.id,l:x.name||'Supplier'}});
-  if(t==='ref:bill')return data.bills.map(function(x){return{v:x.id,l:(x.billNo||'Bill')+' · '+(x.customer||'')+' · due '+money(x.balance)}});
-  return [];
+  if(REF_OPTION_CACHE[t])return REF_OPTION_CACHE[t];
+  var out=[];
+  if(t==='ref:stock')out=data.stock.map(function(x){return{v:x.id,l:(x.name||x.partNo||'Item')+' · '+num(x.qty)+' left'}});
+  else if(t==='ref:staff')out=data.staff.map(function(x){return{v:x.id,l:x.name||'Staff'}});
+  else if(t==='ref:supplier')out=data.suppliers.map(function(x){return{v:x.id,l:x.name||'Supplier'}});
+  else if(t==='ref:bill')out=data.bills.map(function(x){return{v:x.id,l:(x.billNo||'Bill')+' · '+(x.customer||'')+' · due '+money(x.balance)}});
+  REF_OPTION_CACHE[t]=out;return out;
 }
 function fieldHTML(f,v){
   var h='<div class="'+(f.full?'full':'')+'"><label>'+esc(f.l)+(f.req?' *':'')+'</label>';
@@ -781,8 +858,7 @@ function openBill(id,pre){
   var svc=old.serviceCharge!==undefined?old.serviceCharge:((id&&!parts.length&&!customs.length)?num(old.amount):0);
   var selectedCategories=String(v('category','')).split(/\\s*,\\s*/).filter(Boolean);
   var categoryChecks='<div class="full"><label>Service category <span class="note">(Select multiple)</span></label><div id="b_category" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">'+CATS.map(function(c){return '<label style="display:flex;align-items:center;gap:9px;padding:11px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card);font-size:.86rem;font-weight:600"><input type="checkbox" class="b_category_option" value="'+esc(c)+'"'+(selectedCategories.indexOf(c)>=0?' checked':'')+' style="width:18px;height:18px;accent-color:var(--accent)"> '+esc(c)+'</label>'}).join('')+'</div></div>';
-  var custOpts='<option value="">Pick a saved customer (optional)</option>'+data.customers.map(function(c){return '<option value="'+c.id+'">'+esc(c.name||'Customer')+(c.vehicle?' · '+esc(c.vehicle):'')+'</option>'}).join('');
-  var stockOpts='<option value="">Choose item from stock</option>'+data.stock.map(function(s){return '<option value="'+s.id+'">'+esc(s.name||s.partNo||'Part')+' · '+num(s.qty)+' left · '+money(s.sell)+'</option>'}).join('');
+  var billOptions=billOptionHtml(),custOpts=billOptions.customers,stockOpts=billOptions.stock;
   var h=sheetHead(id?'Edit bill':'New bill')+'<form id="bf" autocomplete="off">'+
    '<label>Saved customer</label><select id="b_cust">'+custOpts+'</select>'+
    '<div class="fg"><div><label>Bill number</label><input id="b_billNo" value="'+esc(v('billNo',nextBillNo()))+'"></div><div><label>Date</label><input id="b_date" type="date" value="'+esc(v('date',today()))+'"></div>'+
@@ -1237,24 +1313,31 @@ function pasteImport(){
 }
 
 /* ================= money maths ================= */
-function receivedOn(date){
-  var pays=data.billPayments,total=0;
-  data.bills.filter(function(b){return (b.date||'')===date}).forEach(function(b){
-    var later=pays.filter(function(p){return p.billId===b.id}).reduce(function(a,p){return a+num(p.amount)},0);
-    total+=Math.max(0,num(b.paid)-later);
-  });
-  total+=pays.filter(function(p){return (p.date||'')===date}).reduce(function(a,p){return a+num(p.amount)},0);
-  return total;
-}
-function sumExp(list){return list.reduce(function(a,x){return a+num(x.amount)},0)}
-function allDue(){return data.bills.reduce(function(a,b){return a+Math.max(0,num(b.balance))},0)}
+function receivedOn(date){return dataIndexes().receivedByDate[date]||0}
+function sumExp(list){var total=0;for(var i=0;i<list.length;i++)total+=num(list[i].amount);return total}
+function allDue(){return dataIndexes().allDue}
 
 /* ================= views ================= */
 var LISTS={};
 var VIEW={};
+var LIST_PAGE_SIZE=50,listLimits=Object.create(null);
+function listWindow(key,arr,rowFn,emptyMessage){
+  if(!arr.length)return empty(emptyMessage||'No records found.');
+  var limit=listLimits[key]||LIST_PAGE_SIZE,shown=Math.min(limit,arr.length);
+  var html='<div class="list">'+arr.slice(0,limit).map(rowFn).join('')+'</div>';
+  if(arr.length>limit)html+='<button class="sm full" style="margin-top:10px" onclick="CX.more(\''+key+'\')">Show '+Math.min(LIST_PAGE_SIZE,arr.length-limit)+' more · '+shown+' of '+arr.length+'</button>';
+  return html;
+}
+function moreList(key){
+  listLimits[key]=(listLimits[key]||LIST_PAGE_SIZE)+LIST_PAGE_SIZE;
+  var el=$('#list-'+key),fn=LISTS[key];
+  if(el&&typeof fn==='function')el.innerHTML=fn();
+  else if(key==='reportBills'||key==='reportExpenses'){var root=$('#page');if(root){var fresh=VIEW.reports();root.innerHTML=fresh}}
+}
+
 
 VIEW.home=function(){
-  var t=today(),billsT=data.bills.filter(function(b){return b.date===t}),expT=data.expenses.filter(function(e){return e.date===t});
+  var ix=dataIndexes(),t=today(),billsT=ix.billsByDate[t]||[],expT=ix.expensesByDate[t]||[];
   var low=data.stock.filter(isLow).length;
   var gn=(data.settings.garageName||'').trim();
   var h='<div class="card hero"><div><small>OWNER WORKSPACE</small><h2>'+esc(gn||'Welcome back')+'</h2><p>'+new Date().toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'short',year:'numeric'})+'</p></div><div class="orb">'+ic('car',30)+'</div></div>';
@@ -1285,12 +1368,12 @@ function billCard(b){
 LISTS.bills=function(){
   var s=q('bills');
   var a=data.bills.filter(function(x){return !s||lc([x.billNo,x.customer,x.vehicle,x.reg,x.category,x.phone].join(' ')).indexOf(s)>=0});
-  return a.length?'<div class="list">'+a.map(billCard).join('')+'</div>':empty('No bills found.');
+  return listWindow('bills',a,billCard,'No bills found.');
 };
 VIEW.bills=function(){
   var pend=allDue();
   return head('Billing',addBtn('New bill','CX.billNew()'))+
-   '<div class="grid" style="margin-bottom:14px"><div class="card stat hot"><div class="l">Total billed</div><div class="n">'+money(data.bills.reduce(function(a,b){return a+num(b.amount)},0))+'</div></div><div class="card stat"><div class="l">Pending dues</div><div class="n">'+money(pend)+'</div></div></div>'+
+   '<div class="grid" style="margin-bottom:14px"><div class="card stat hot"><div class="l">Total billed</div><div class="n">'+money(dataIndexes().totalBilled)+'</div></div><div class="card stat"><div class="l">Pending dues</div><div class="n">'+money(pend)+'</div></div></div>'+
    searchBox('bills','Search bill, customer, vehicle, phone')+'<div id="list-bills">'+LISTS.bills()+'</div>';
 };
 
@@ -1298,15 +1381,15 @@ function isLow(s){return num(s.qty)<=num(s.minQty!=null&&s.minQty!==''?s.minQty:
 LISTS.stock=function(){
   var s=q('stock');
   var a=data.stock.filter(function(x){return !s||lc([x.name,x.partNo].join(' ')).indexOf(s)>=0});
-  return a.length?'<div class="list">'+a.map(function(x){
+  return listWindow('stock',a,function(x){
     var low=isLow(x);
     return '<div class="item" onclick="CX.edit(\'stock\',\''+x.id+'\')"><div class="av '+(low?'low':'')+'">'+ic(low?'alert':'box',20)+'</div><div class="body"><div class="t">'+esc(x.name||'Part')+'</div><div class="m">'+(x.partNo?'#'+esc(x.partNo)+' · ':'')+'Buy '+money(x.buy)+' · Sell '+money(x.sell)+'</div>'+(low?'<span class="chip warn">Low stock</span>':'')+'</div><div class="side"><div class="t">'+num(x.qty)+'</div><div class="m">in stock</div></div></div>';
-  }).join('')+'</div>':empty('No stock items yet.');
+  },'No stock items yet.');
 };
 LISTS.suppliers=function(){
-  return data.suppliers.length?'<div class="list">'+data.suppliers.map(function(x){
+  return listWindow('suppliers',data.suppliers,function(x){
     return '<div class="item" onclick="CX.edit(\'supplier\',\''+x.id+'\')"><div class="av">'+ic('truck',20)+'</div><div class="body"><div class="t">'+esc(x.name||'Supplier')+'</div><div class="m">'+esc([x.phone,x.parts,x.address].filter(Boolean).join(' · ')||'No details')+'</div></div><button class="xbtn danger" onclick="event.stopPropagation();CX.del(\'supplier\',\''+x.id+'\')">'+ic('trash',16)+'</button></div>';
-  }).join('')+'</div>':empty('No suppliers added.');
+  },'No suppliers added.');
 };
 VIEW.stock=function(){
   var val=data.stock.reduce(function(a,s){return a+num(s.qty)*num(s.buy)},0),low=data.stock.filter(isLow).length;
@@ -1322,16 +1405,21 @@ VIEW.stock=function(){
 };
 
 function customerBills(c){
-  var n=lc(c.name).trim();
-  return data.bills.filter(function(b){return (n&&lc(b.customer).trim()===n)||(c.phone&&b.phone===c.phone)});
+  var ix=dataIndexes(),n=lc(c.name).trim(),byName=n?(ix.billsByCustomerName[n]||[]):[],byPhone=c.phone?(ix.billsByCustomerPhone[String(c.phone)]||[]):[];
+  if(!byName.length)return byPhone.slice();
+  if(!byPhone.length)return byName.slice();
+  var out=byName.slice(),seen=Object.create(null);
+  for(var i=0;i<out.length;i++)seen[out[i].id]=1;
+  for(var j=0;j<byPhone.length;j++)if(!seen[byPhone[j].id])out.push(byPhone[j]);
+  return out;
 }
 LISTS.customers=function(){
   var s=q('customers');
   var a=data.customers.filter(function(x){return !s||lc([x.name,x.phone,x.vehicle,x.reg,x.notes].join(' ')).indexOf(s)>=0});
-  return a.length?'<div class="list">'+a.map(function(c){
+  return listWindow('customers',a,function(c){
     var bills=customerBills(c),due=bills.reduce(function(a,b){return a+num(b.balance)},0);
     return '<div class="item" onclick="CX.viewCustomer(\''+c.id+'\')"><div class="av">'+ic('user',20)+'</div><div class="body"><div class="t">'+esc(c.name||'Customer')+'</div><div class="m">'+esc([c.phone,c.vehicle,c.reg].filter(Boolean).join(' · ')||'No details')+'</div><span class="chip">'+bills.length+' bill'+(bills.length===1?'':'s')+'</span>'+(due>0?'<span class="chip warn">Due '+money(due)+'</span>':'')+'</div></div>';
-  }).join('')+'</div>':empty('No customers yet. Tap “Add customer”.');
+  },'No customers yet. Tap “Add customer”.');
 };
 VIEW.customers=function(){
   return head('Customers',addBtn('Add customer',"CX.add('customer')"))+searchBox('customers','Search name, phone, vehicle, registration')+'<div id="list-customers">'+LISTS.customers()+'</div>';
@@ -1356,11 +1444,11 @@ function attFor(staffId,date){return data.attendance.find(function(a){return a.s
 LISTS.staff=function(){
   var s=q('staff'),t=today();
   var a=data.staff.filter(function(x){return !s||lc([x.name,x.phone,x.role,x.notes].join(' ')).indexOf(s)>=0});
-  return a.length?'<div class="list">'+a.map(function(x){
+  return listWindow('staff',a,function(x){
     var rec=attFor(x.id,t),left=Math.max(0,num(x.leaveTotal)-num(x.leaveUsed));
     return '<div class="item" onclick="CX.viewStaff(\''+x.id+'\')"><div class="av">'+ic('idcard',20)+'</div><div class="body"><div class="t">'+esc(x.name||'Staff')+'</div><div class="m">'+esc([x.role,x.phone,'Salary '+money(x.salary)].filter(Boolean).join(' · '))+'</div>'+
      '<span class="chip '+(rec?(rec.status==='Present'?'ok':rec.status==='Absent'?'bad':'warn'):'')+'">'+(rec?'Today: '+esc(rec.status):'Not marked today')+'</span><span class="chip '+(x.salaryStatus==='Paid'?'ok':'warn')+'">Salary '+esc(x.salaryStatus||'Pending')+'</span>'+(num(x.leaveTotal)?'<span class="chip">'+left+' leave left</span>':'')+'</div></div>';
-  }).join('')+'</div>':empty('No staff yet. Tap “Add staff”.');
+  },'No staff yet. Tap “Add staff”.');
 };
 LISTS.attendance=function(){
   var s=q('attendance');
@@ -1427,15 +1515,15 @@ function dayPut(date,st){setAtt(calStaff,date,st);closeSheet();save();renderCal(
 LISTS.expenses=function(){
   var s=q('expenses');
   var a=data.expenses.filter(function(x){return !s||lc([x.title,x.category,x.paidTo,x.paymentMode,x.notes,x.date].join(' ')).indexOf(s)>=0}).sort(function(x,y){return (y.date||'').localeCompare(x.date||'')});
-  return a.length?'<div class="list">'+a.map(expCard).join('')+'</div>':empty('No expenses yet.');
+  return listWindow('expenses',a,expCard,'No expenses yet.');
 };
 function expCard(x){
   return '<div class="item" onclick="CX.edit(\'expense\',\''+x.id+'\')"><div class="av">'+ic('wallet',20)+'</div><div class="body"><div class="t">'+esc(x.title||'Expense')+'</div><div class="m">'+esc([x.category,x.paidTo,x.paymentMode,x.date].filter(Boolean).join(' · '))+'</div></div><div class="side"><div class="t">'+money(x.amount)+'</div></div><button class="xbtn danger" onclick="event.stopPropagation();CX.del(\'expense\',\''+x.id+'\')">'+ic('trash',16)+'</button></div>';
 }
 VIEW.expenses=function(){
-  var mk=today().slice(0,7),mt=sumExp(data.expenses.filter(function(e){return (e.date||'').indexOf(mk)===0}));
+  var ix=dataIndexes(),mk=today().slice(0,7),mt=sumExp(ix.expensesByMonth[mk]||[]);
   return head('Expenses',addBtn('Add expense',"CX.add('expense')"))+
-   '<div class="grid" style="margin-bottom:14px"><div class="card stat hot"><div class="l">This month</div><div class="n">'+money(mt)+'</div></div><div class="card stat"><div class="l">All time ('+data.expenses.length+')</div><div class="n">'+money(sumExp(data.expenses))+'</div></div></div>'+
+   '<div class="grid" style="margin-bottom:14px"><div class="card stat hot"><div class="l">This month</div><div class="n">'+money(mt)+'</div></div><div class="card stat"><div class="l">All time ('+data.expenses.length+')</div><div class="n">'+money(ix.totalExpenses)+'</div></div></div>'+
    searchBox('expenses','Search expense, category, vendor')+'<div id="list-expenses">'+LISTS.expenses()+'</div>';
 };
 
@@ -1447,7 +1535,7 @@ function repToday(){repDate=today();render()}
 function repYest(){var d=new Date();d.setDate(d.getDate()-1);repDate=dstr(d);render()}
 var PAL=['#2f8cff','#5cc8ff','#7c6cff','#ffb84d','#ff6b8b','#36d6e7','#a3b6d9','#4f6bd6','#35d6a8'];
 VIEW.reports=function(){
-  var sel=rd(),bills=data.bills.filter(function(b){return (b.date||'')===sel}),exps=data.expenses.filter(function(e){return (e.date||'')===sel});
+  var ix=dataIndexes(),sel=rd(),bills=ix.billsByDate[sel]||[],exps=ix.expensesByDate[sel]||[];
   var rec=receivedOn(sel),billed=bills.reduce(function(a,b){return a+num(b.amount)},0),ex=sumExp(exps),profit=bills.reduce(function(a,b){return a+num(b.profit)},0),dues=bills.reduce(function(a,b){return a+Math.max(0,num(b.balance))},0);
   var h=head('Reports','<button class="sm" onclick="CX.export()">'+ic('download',16)+'Backup</button>');
   h+='<div class="card"><label style="margin-top:0">View dashboard for date</label><input type="date" value="'+esc(sel)+'" onchange="CX.repDate(this.value)"><div class="row" style="margin-top:10px"><button class="sm" onclick="CX.repToday()">Today</button><button class="sm" onclick="CX.repYest()">Yesterday</button></div></div>';
@@ -1458,11 +1546,11 @@ VIEW.reports=function(){
    '<button class="card stat" onclick="CX.chart(\'bills\')"><div class="l">Bills</div><div class="n">'+bills.length+'</div><div class="foot">Tap for chart</div></button>'+
    '<button class="card stat" style="grid-column:1/-1" onclick="CX.chart(\'dues\')"><div class="l">Pending customer dues (this date)</div><div class="n">'+money(dues)+'</div><div class="foot">Tap for chart</div></button></div>';
   h+='<h3>Billing summary</h3><div class="card"><div class="l" style="color:var(--muted);font-size:.78rem">Total billed on this date</div><div class="n" style="font-size:1.6rem;font-weight:800">'+money(billed)+'</div><div class="bar"><span style="width:'+(rec?Math.min(100,rec/((rec+ex)||1)*100):0)+'%"></span></div><div class="note">Bar shows received vs expenses for the day.</div></div>';
-  h+='<h3>Bills on this date</h3>'+(bills.length?'<div class="list">'+bills.map(billCard).join('')+'</div>':empty('No bills on this date.'));
-  h+='<h3>Expenses on this date</h3>'+(exps.length?'<div class="list">'+exps.map(expCard).join('')+'</div>':empty('No expenses on this date.'));
+  h+='<h3>Bills on this date</h3><div id="list-reportBills">'+listWindow('reportBills',bills,billCard,'No bills on this date.')+'</div>';
+  h+='<h3>Expenses on this date</h3><div id="list-reportExpenses">'+listWindow('reportExpenses',exps,expCard,'No expenses on this date.')+'</div>';
   var pm=pnlMonth||today().slice(0,7),y=+pm.slice(0,4),mo=+pm.slice(5,7),dim=new Date(y,mo,0).getDate(),inc=0;
   for(var d=1;d<=dim;d++)inc+=receivedOn(pm+'-'+pad(d));
-  var mex=sumExp(data.expenses.filter(function(e){return (e.date||'').indexOf(pm)===0})),mb=data.bills.filter(function(b){return (b.date||'').indexOf(pm)===0});
+  var mex=sumExp(ix.expensesByMonth[pm]||[]),mb=ix.billsByMonth[pm]||[];
   var mprofit=mb.reduce(function(a,b){return a+num(b.profit)},0),net=inc-mex;
   h+='<h3>Monthly profit &amp; loss</h3><div class="card"><input type="month" value="'+esc(pm)+'" onchange="CX.pnl(this.value)"><div class="grid4" style="margin-top:12px">'+
    '<div class="stat"><div class="l">Earnings</div><div class="n">'+money(inc)+'</div></div>'+
@@ -1473,9 +1561,12 @@ VIEW.reports=function(){
   return h;
 };
 function chartItems(kind){
-  var date=rd(),bs=data.bills.filter(function(x){return (x.date||'')===date}),ex=data.expenses.filter(function(x){return (x.date||'')===date}),map={},pays=data.billPayments;
+  var ix=dataIndexes(),date=rd(),bs=ix.billsByDate[date]||[],ex=ix.expensesByDate[date]||[],map={},pays=ix.paymentsByDate[date]||[];
   var add=function(l,v){v=num(v);if(v<=0)return;l=l||'Unspecified';map[l]=(map[l]||0)+v};
-  if(kind==='earnings'){bs.forEach(function(b){var later=pays.filter(function(p){return p.billId===b.id}).reduce(function(a,p){return a+num(p.amount)},0);add(b.paymentMode||'Not specified',Math.max(0,num(b.paid)-later))});pays.filter(function(p){return (p.date||'')===date}).forEach(function(p){add(p.mode||'Not specified',p.amount)})}
+  if(kind==='earnings'){
+    for(var i=0;i<bs.length;i++){var b=bs[i];add(b.paymentMode||'Not specified',Math.max(0,num(b.paid)-(ix.paymentsByBill[b.id]||0)))}
+    for(var j=0;j<pays.length;j++)add(pays[j].mode||'Not specified',pays[j].amount);
+  }
   if(kind==='expenses')ex.forEach(function(x){add(x.category||x.title||'Other',x.amount)});
   if(kind==='profit')bs.forEach(function(b){add(b.category||b.billNo||'Bill',b.profit)});
   if(kind==='bills')bs.forEach(function(b){add(b.category||'General service',1)});
@@ -1580,7 +1671,7 @@ function about(){
 
 /* ================= public API ================= */
 window.CX={
-  go:go,close:closeSheet,search:setSearch,
+  go:go,close:closeSheet,search:setSearch,more:moreList,
   add:function(t){openForm(t,null)},edit:function(t,id){openForm(t,id)},editFromSheet:function(t,id){closeSheet();setTimeout(function(){openForm(t,id)},80)},
   del:removeRecord,
   billNew:function(){openBill(null)},viewBill:viewBill,viewBillFrom:function(id){closeSheet();setTimeout(function(){viewBill(id)},80)},editBill:editBill,payBill:payBill,waBill:waBill,downloadBill:downloadBill,printBill:printBill,
@@ -1615,4 +1706,3 @@ try{
 </script>
 </body>
 </html>
-
