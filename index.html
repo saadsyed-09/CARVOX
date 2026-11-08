@@ -893,7 +893,7 @@ function viewBill(id){
    (pays.length?'<h3>Payments received later</h3><div class="list">'+pays.map(function(p){return '<div class="lg"><span>'+esc(p.date||'')+' · '+esc(p.mode||'')+'</span><span><b>'+money(p.amount)+'</b> <button class="xbtn danger" style="width:30px;height:30px;vertical-align:middle" onclick="CX.del(\'billpay\',\''+p.id+'\')">'+ic('trash',14)+'</button></span></div>'}).join('')+'</div>':'')+
    '<div class="actions">'+
    (num(b.balance)>0?'<button class="primary" onclick="CX.payBill(\''+id+'\')">'+ic('rupee',18)+'Receive payment</button>':'')+
-   '<button onclick="CX.shareBill(\''+id+'\')">'+ic('share',18)+'Share image</button>'+
+   '<button class="primary" onclick="CX.downloadBill(\''+id+'\')">'+ic('download',18)+'Download image</button>'+
    '<button onclick="CX.printBill(\''+id+'\')">'+ic('print',18)+'Print</button>'+
    '<button onclick="CX.editBill(\''+id+'\')">'+ic('edit',18)+'Edit</button>'+
    '<button class="danger" onclick="CX.del(\'bill\',\''+id+'\')">'+ic('trash',18)+'Delete</button></div>';
@@ -1031,53 +1031,26 @@ function showInvoiceImagePreview(blob,fileName,title){
   openSheet(h);
   setTimeout(function(){try{URL.revokeObjectURL(objectUrl)}catch(e){}},120000);
 }
-async function shareBill(id){
+async function downloadBill(id){
   var b=byId(data.bills,id);if(!b)return;
-  var blob=null,fileName='CarvoX-Invoice.png';
+  var fileName='CarvoX-Invoice.png';
   try{
     toast('Preparing invoice image…');
     var canvas=await renderInvoiceCanvas(b);
-    blob=await canvasToBlob(canvas);
+    var blob=await canvasToBlob(canvas);
     var cleanNo=String(b.billNo||'Invoice').replace(/[^a-z0-9_-]/gi,'_');
     fileName='CarvoX-'+cleanNo+'.png';
-
-    // Capacitor Android: save the PNG in CACHE and pass it as a file attachment.
-    // Passing it as `url` caused the Android share sheet to receive a link rather than an image attachment.
-    var cap=window.Capacitor;
-    if(cap&&cap.isNativePlatform&&cap.isNativePlatform()){
-      try{
-        var fs=nativePlugin('Filesystem'),sh=nativePlugin('Share');
-        if(fs&&typeof fs.writeFile==='function'&&sh&&typeof sh.share==='function'){
-          var base64=await blobToBase64(blob);
-          var saved=await fs.writeFile({path:'CarvoX-'+cleanNo+'-'+Date.now()+'.png',data:base64,directory:'CACHE',encoding:'base64'});
-          if(saved&&saved.uri){
-            await sh.share({title:'CarvoX Invoice '+(b.billNo||''),files:[saved.uri],dialogTitle:'Share invoice image'});
-            return;
-          }
-        }
-      }catch(nativeError){console.warn('Native invoice sharing unavailable; trying Web Share.',nativeError)}
-    }
-
-    // Browser / supported WebView: send the PNG file, not invoice text.
-    if(typeof File!=='undefined'&&navigator.share){
-      try{
-        var file=new File([blob],fileName,{type:'image/png'});
-        var canShareFiles=!navigator.canShare||navigator.canShare({files:[file]});
-        if(canShareFiles){await navigator.share({files:[file],title:'CarvoX Invoice '+(b.billNo||'')});return;}
-      }catch(webShareError){
-        if(webShareError&&webShareError.name==='AbortError')return;
-        console.warn('Web Share unavailable; showing the generated invoice image.',webShareError);
-      }
-    }
-
-    // Never leave the user with an empty share action: show the actual image and a PNG download.
-    showInvoiceImagePreview(blob,fileName,'Invoice image ready');
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');a.href=url;a.download=fileName;a.style.display='none';
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){try{URL.revokeObjectURL(url)}catch(e){}},60000);
+    toast('Invoice PNG download started');
   }catch(e){
-    console.error('CarvoX invoice image error:',e);
-    toast('Could not create invoice image: '+(e&&e.message?e.message:'Please try again.'));
-    if(blob)showInvoiceImagePreview(blob,fileName,'Invoice image');
+    console.error('CarvoX invoice download error:',e);
+    toast('Could not download invoice image: '+(e&&e.message?e.message:'Please try again.'));
   }
 }
+
 async function printBill(id){
   var b=byId(data.bills,id);if(!b)return;
   var pa=$('#printArea');if(!pa){toast('Print area is unavailable');return;}
@@ -1517,7 +1490,7 @@ function about(){
     '<li>Monthly Profit &amp; Loss now shows Earnings, Profit, Expenses and Net.</li>'+
     '<li>Invoices can be shared as a complete PNG image using the phone sharing panel.</li>'+ 
     '<li>Print uses the same designed invoice artwork, including the garage logo and payment summary.</li>'+ 
-    '<li>The direct WhatsApp invoice shortcut has been removed. Use Share image to choose a sharing app.</li>'+ 
+    '<li>Invoice image action now downloads a ready-to-save PNG directly to your device.</li>'+ 
     '</ul><h3>App features</h3><ul style="padding-left:20px;line-height:1.7;color:var(--muted);margin:0">'+
     '<li>Dashboard with daily earnings, expenses, profit, bills and pending dues.</li>'+ 
     '<li>Stock management, suppliers and stock purchase records.</li>'+ 
@@ -1535,7 +1508,7 @@ window.CX={
   go:go,close:closeSheet,search:setSearch,
   add:function(t){openForm(t,null)},edit:function(t,id){openForm(t,id)},editFromSheet:function(t,id){closeSheet();setTimeout(function(){openForm(t,id)},80)},
   del:removeRecord,
-  billNew:function(){openBill(null)},viewBill:viewBill,viewBillFrom:function(id){closeSheet();setTimeout(function(){viewBill(id)},80)},editBill:editBill,payBill:payBill,waBill:waBill,shareBill:shareBill,printBill:printBill,
+  billNew:function(){openBill(null)},viewBill:viewBill,viewBillFrom:function(id){closeSheet();setTimeout(function(){viewBill(id)},80)},editBill:editBill,payBill:payBill,waBill:waBill,downloadBill:downloadBill,printBill:printBill,
   addPart:addPart,addCustom:addCustom,rmPart:function(i){parts.splice(i,1);renderBillLists()},rmCustom:function(i){customs.splice(i,1);renderBillLists()},estProfit:estProfit,
   viewCustomer:viewCustomer,billFor:billFor,
   viewStaff:viewStaff,markToday:markToday,paySalary:paySalary,openCal:openCal,shiftCal:shiftCal,dayPick:dayPick,dayPut:dayPut,
