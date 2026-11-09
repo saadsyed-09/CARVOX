@@ -23,20 +23,14 @@ jobs:
         with:
           node-version: 22
 
-      - name: Setup Java 21
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 17
 
       - name: Install dependencies
         run: npm install
-
-      - name: Ensure TypeScript is installed
-        run: npm install --save-dev typescript
-
-      - name: Build web assets
-        run: npm run build
 
       - name: Add Android platform if missing
         run: |
@@ -47,8 +41,8 @@ jobs:
       - name: Generate Android launcher assets
         run: |
           npx @capacitor/assets generate --android \
-            --iconBackgroundColor '#07111f' \
-            --splashBackgroundColor '#07111f'
+            --iconBackgroundColor '#050608' \
+            --splashBackgroundColor '#050608'
 
       - name: Sync Capacitor
         run: npx cap sync android
