@@ -34,13 +34,16 @@ jobs:
 
       - name: Prepare web files
         run: |
-          if [ ! -f CarvoX-app.html ]; then
-            echo "CarvoX-app.html repo ke root mein upload karo"
+          f=$(ls | grep -i '^carvox.*\.html$' | head -n 1)
+          if [ -z "$f" ]; then
+            echo "CarvoX html file repo ke root mein upload karo"
+            ls
             exit 1
           fi
+          echo "Using $f"
           rm -rf www
           mkdir -p www
-          cp CarvoX-app.html www/index.html
+          cp "$f" www/index.html
 
       - name: Add Android platform if missing
         run: |
