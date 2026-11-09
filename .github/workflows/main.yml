@@ -38,11 +38,11 @@ jobs:
             npx cap add android
           fi
 
+      - name: Install Pillow
+        run: pip install pillow
+
       - name: Generate Android launcher assets
-        run: |
-          npx @capacitor/assets generate --android \
-            --iconBackgroundColor '#050608' \
-            --splashBackgroundColor '#050608'
+        run: python3 make_icons.py
 
       - name: Sync Capacitor
         run: npx cap sync android
