@@ -1,6 +1,9 @@
 {
-  "appId": "com.garagemanager.app",
+  "appId": "com.carvox.garage",
   "appName": "CarvoX",
   "webDir": "www",
-  "bundledWebRuntime": false
+  "backgroundColor": "#08090b",
+  "android": {
+    "allowMixedContent": false
+  }
 }
