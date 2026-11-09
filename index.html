@@ -245,7 +245,7 @@ function ic(n){return '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><pa
 var $=function(s,r){return (r||document).querySelector(s)};
 var esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})};
 var num=function(v){var n=parseFloat(v);return isFinite(n)?n:0};
-var inr=function(n){return '₹'+num(n).toLocaleString('en-IN',{maximumFractionDigits:2})};
+var inr=function(n){n=num(n);return (n<0?'-':'')+'₹'+Math.abs(n).toLocaleString('en-IN',{maximumFractionDigits:2})};
 var pad=function(n,l){return String(n).padStart(l,'0')};
 var iso=function(d){return d.getFullYear()+'-'+pad(d.getMonth()+1,2)+'-'+pad(d.getDate(),2)};
 var today=function(){return iso(new Date())};
@@ -268,7 +268,7 @@ var cur='home';
 
 /* ---------- derived ---------- */
 var received=function(b){return b.payments.reduce(function(s,p){return s+p.amount},0)};
-var dueOf=function(b){return Math.max(0,b.total-received(b))};
+var dueOf=function(b){return b.due!=null?Math.max(0,b.due):Math.max(0,b.total-received(b))};
 function earn(d){var t=0;S.bills.forEach(function(b){b.payments.forEach(function(p){if(p.date===d)t+=p.amount})});return t}
 function exps(d){return S.expenses.filter(function(e){return e.date===d}).reduce(function(s,e){return s+e.amount},0)}
 function prof(d){return S.bills.filter(function(b){return b.date===d}).reduce(function(s,b){return s+b.profit},0)}
@@ -558,44 +558,52 @@ function salarySheet(){
 
 /* ----- bill form ----- */
 var CATS=['ALIGNMENT','BALANCING','DENTING','PAINTING','REPAIRS','WASHING','ELECTRICAL WORK','AC WORK','INSURANCE','OTHER'];
-function billSheet(custId){
-  var d={parts:[],customs:[],manual:false};
-  var cu=S.customers.find(function(x){return x.id===custId})||{};
+function billSheet(custId,editId){
+  var E=editId?S.bills.find(function(x){return x.id===editId}):null;
+  var d={parts:E?JSON.parse(JSON.stringify(E.parts)):[],customs:E?JSON.parse(JSON.stringify(E.customs)):[],manual:false};
+  if(E)custId=E.custId;
+  var cu=E?{name:E.name,phone:E.phone,vehicle:E.vehicle,reg:E.reg}:(S.customers.find(function(x){return x.id===custId})||{});
+  var oldQ=function(id){var t=0;if(E)E.parts.forEach(function(p){if(p.id===id)t+=p.qty});return t};
+  var avail=function(s){return s.qty+oldQ(s.id)};
   var html=F('Saved customer','<select id="b_cust"><option value="">Pick a saved customer (optional)</option>'+S.customers.map(function(c){return '<option value="'+c.id+'"'+(c.id===custId?' selected':'')+'>'+esc(c.name)+(c.vehicle?' · '+esc(c.vehicle):'')+'</option>'}).join('')+'</select>')
-  +'<div class="two"><div>'+F('Bill number','<input id="b_no" value="CX-'+pad(S.seq,4)+'">')+'</div><div>'+F('Date','<input id="b_date" type="date" value="'+today()+'">')+'</div></div>'
+  +'<div class="two"><div>'+F('Bill number','<input id="b_no" value="'+esc(E?E.no:'CX-'+pad(S.seq,4))+'">')+'</div><div>'+F('Date','<input id="b_date" type="date" value="'+(E?E.date:today())+'">')+'</div></div>'
   +F('Customer name','<input id="b_name" value="'+esc(cu.name)+'">')
   +'<div class="two"><div>'+F('Phone','<input id="b_phone" inputmode="tel" value="'+esc(cu.phone)+'">')+'</div><div>'+F('Vehicle','<input id="b_veh" value="'+esc(cu.vehicle)+'">')+'</div></div>'
   +F('Registration number','<input id="b_reg" value="'+esc(cu.reg)+'">')
-  +'<label class="f">Service category (Select multiple)</label><div class="cats" id="b_cats">'+CATS.map(function(c){return '<label class="cat"><input type="checkbox" value="'+c+'">'+c+'</label>'}).join('')+'</div>'
-  +F('Service / labour details','<textarea id="b_det"></textarea>')
-  +F('Service / labour charge (₹)','<input id="b_lab" type="number" inputmode="decimal" min="0" value="0">')
-  +'<div class="blk">Stock parts used</div><div class="three"><select id="b_stock"><option value="">Choose item from stock</option>'+S.stock.filter(function(s){return s.qty>0}).map(function(s){return '<option value="'+s.id+'">'+esc(s.name)+' ('+s.qty+' left) · '+inr(s.price)+'</option>'}).join('')+'</select><input id="b_sq" type="number" inputmode="decimal" min="1" value="1" style="width:5em" aria-label="Quantity"><button type="button" class="btn sm" id="b_sadd">Add</button></div><p class="hint">Stock reduces automatically when the bill is saved.</p><div id="b_parts"></div>'
+  +'<label class="f">Service category (Select multiple)</label><div class="cats" id="b_cats">'+CATS.map(function(c){return '<label class="cat"><input type="checkbox" value="'+c+'"'+(E&&E.cats.indexOf(c)>-1?' checked':'')+'>'+c+'</label>'}).join('')+'</div>'
+  +F('Service / labour details','<textarea id="b_det">'+esc(E?E.details:'')+'</textarea>')
+  +F('Service / labour charge (₹)','<input id="b_lab" type="number" inputmode="decimal" min="0" value="'+(E?E.labour:0)+'">')
+  +'<div class="blk">Stock parts used</div><div class="three"><select id="b_stock"><option value="">Choose item from stock</option>'+S.stock.filter(function(s){return avail(s)>0}).map(function(s){return '<option value="'+s.id+'">'+esc(s.name)+' ('+avail(s)+' left) · '+inr(s.price)+'</option>'}).join('')+'</select><input id="b_sq" type="number" inputmode="decimal" min="1" value="1" style="width:5em" aria-label="Quantity"><button type="button" class="btn sm" id="b_sadd">Add</button></div><p class="hint">Stock reduces automatically when the bill is saved.</p><div id="b_parts"></div>'
   +'<div class="blk">Custom items (not from stock)</div><div class="three" style="grid-template-columns:1fr 5.5em 4em"><input id="b_cn" placeholder="Item name" aria-label="Item name"><input id="b_cp" type="number" inputmode="decimal" min="0" placeholder="₹" aria-label="Price"><input id="b_cq" type="number" inputmode="decimal" min="1" value="1" aria-label="Quantity"></div><button type="button" class="btn ghost block" style="margin-top:10px" id="b_cadd">'+ic('plus')+'Add custom item</button><div id="b_customs"></div>'
-  +'<div class="blk">Payment</div><div class="two"><div>'+F('Bill total (₹)','<input id="b_total" type="number" inputmode="decimal" min="0" value="0.00">')+'</div><div>'+F('Amount received (₹)','<input id="b_recv" type="number" inputmode="decimal" min="0" value="0">')+'</div></div>'
-  +'<div class="two"><div>'+F('Payment mode','<select id="b_mode"><option>Cash</option><option>UPI</option><option>Card</option><option>Bank transfer</option><option>Cheque</option></select>')+'</div><div>'+F('Due amount','<div class="duebox" id="b_due">₹0</div>')+'</div></div>'
-  +'<label class="f">Profit (₹) — your own figure</label><div style="display:flex;gap:8px"><input id="b_prof" type="number" inputmode="decimal" value="0" style="flex:1;min-width:0"><button type="button" class="btn ghost sm" id="b_est">Estimate</button></div><p class="hint">Estimate = labour charge + (selling − buying price) of stock parts. Custom item cost is unknown, so adjust if needed.</p>'
-  +'<div class="actions"><button class="btn ghost" data-act="closeSheet">Cancel</button><button class="btn" id="b_save">Save bill</button></div>';
-  openSheet('New bill',html,function(sh){
+  +'<div class="blk">Payment</div><div class="two"><div>'+F('Bill total (₹)','<input id="b_total" type="number" inputmode="decimal" min="0" value="'+(E?E.total.toFixed(2):'0.00')+'">')+'</div><div>'+F('Amount received (₹)','<input id="b_recv" type="number" inputmode="decimal" min="0" value="'+(E?received(E):0)+'">')+'</div></div>'
+  +'<div class="two"><div>'+F('Payment mode','<select id="b_mode"><option>Cash</option><option>UPI</option><option>Card</option><option>Bank transfer</option><option>Cheque</option></select>')+'</div><div>'+F('Due amount','<input id="b_due" type="number" inputmode="decimal" min="0" value="'+(E?dueOf(E):0)+'">')+'</div></div>'
+  +'<div class="hint" id="b_note"></div><button type="button" class="mini" id="b_auto">Set due = total − received</button>'
+  +'<label class="f">Profit (₹) — your own figure</label><div style="display:flex;gap:8px"><input id="b_prof" type="number" inputmode="decimal" value="'+(E?E.profit:0)+'" style="flex:1;min-width:0"><button type="button" class="btn ghost sm" id="b_est">Estimate</button></div><p class="hint">Estimate = labour charge + (selling − buying price) of stock parts. Custom item cost is unknown, so adjust if needed.</p>'
+  +'<div class="actions"><button class="btn ghost" data-act="closeSheet">Cancel</button><button class="btn" id="b_save">'+(E?'Save changes':'Save bill')+'</button></div>';
+  openSheet(E?'Edit bill':'New bill',html,function(sh){
     var g=function(i){return $('#'+i,sh)};
     var calc=function(){
       var lab=num(g('b_lab').value),ps=d.parts.reduce(function(s,p){return s+p.price*p.qty},0),cs=d.customs.reduce(function(s,p){return s+p.price*p.qty},0);
       if(!d.manual)g('b_total').value=(lab+ps+cs).toFixed(2);
-      g('b_due').textContent=inr(Math.max(0,num(g('b_total').value)-num(g('b_recv').value)));
+      var tt=num(g('b_total').value),rr=num(g('b_recv').value),dd=num(g('b_due').value),df=tt-rr-dd;
+      g('b_note').textContent=df>0.005?('Discount: '+inr(df)+' (total − received − due)'):(df<-0.005?'Received + due is more than the bill total.':'');
     };
     var draw=function(){
       g('b_parts').innerHTML=d.parts.map(function(p,i){return '<div class="li"><span>'+esc(p.name)+' × '+p.qty+'</span><b>'+inr(p.price*p.qty)+'</b><button type="button" class="x" data-rm="p'+i+'" aria-label="Remove">'+ic('x')+'</button></div>'}).join('')||'<p class="hint">No stock items added.</p>';
       g('b_customs').innerHTML=d.customs.map(function(p,i){return '<div class="li"><span>'+esc(p.name)+' × '+p.qty+'</span><b>'+inr(p.price*p.qty)+'</b><button type="button" class="x" data-rm="c'+i+'" aria-label="Remove">'+ic('x')+'</button></div>'}).join('')||'<p class="hint">No custom items added.</p>';
       calc();
     };
+    if(E){var cs=E.labour+d.parts.reduce(function(s,p){return s+p.price*p.qty},0)+d.customs.reduce(function(s,p){return s+p.price*p.qty},0);d.manual=Math.abs(cs-E.total)>0.005;g('b_mode').value=E.mode}
     draw();
     g('b_cust').onchange=function(){var c=S.customers.find(function(x){return x.id===g('b_cust').value});if(c){g('b_name').value=c.name;g('b_phone').value=c.phone||'';g('b_veh').value=c.vehicle||'';g('b_reg').value=c.reg||''}};
-    g('b_lab').oninput=calc;g('b_recv').oninput=calc;
+    g('b_lab').oninput=calc;g('b_recv').oninput=calc;g('b_due').oninput=calc;
+    g('b_auto').onclick=function(){g('b_due').value=Math.max(0,num(g('b_total').value)-num(g('b_recv').value));calc()};
     g('b_total').oninput=function(){d.manual=true;calc()};
     g('b_sadd').onclick=function(){
       var s=S.stock.find(function(x){return x.id===g('b_stock').value}),n=num(g('b_sq').value);
       if(!s){toast('Choose a stock item');return}if(n<=0){toast('Enter a quantity');return}
       var ex=d.parts.find(function(p){return p.id===s.id}),have=ex?ex.qty:0;
-      if(have+n>s.qty){toast('Only '+s.qty+' in stock');return}
+      if(have+n>avail(s)){toast('Only '+avail(s)+' in stock');return}
       if(ex)ex.qty+=n;else d.parts.push({id:s.id,name:s.name,qty:n,price:s.price,cost:s.cost});
       g('b_stock').value='';g('b_sq').value=1;d.manual=false;draw();
     };
@@ -610,30 +618,41 @@ function billSheet(custId){
       var name=g('b_name').value.trim();
       if(!name&&!g('b_veh').value.trim()){toast('Enter customer name or vehicle');return}
       var cats=[].slice.call(sh.querySelectorAll('#b_cats input:checked')).map(function(i){return i.value});
-      var total=num(g('b_total').value),rc=num(g('b_recv').value),date=g('b_date').value||today();
+      var total=num(g('b_total').value),rc=num(g('b_recv').value),date=g('b_date').value||today(),due=Math.min(num(g('b_due').value),Math.max(0,total-rc));
       var cid=g('b_cust').value;
       if(!cid&&name){
         var phone=g('b_phone').value.trim(),m=S.customers.find(function(c){return c.name.toLowerCase()===name.toLowerCase()&&(c.phone||'')===phone});
         if(!m){m={id:uid(),name:name,phone:phone,vehicle:g('b_veh').value.trim(),reg:g('b_reg').value.trim().toUpperCase(),notes:'',createdAt:Date.now()};S.customers.push(m)}
         cid=m.id;
       }
-      var b={id:uid(),no:g('b_no').value.trim()||('CX-'+pad(S.seq,4)),date:date,custId:cid,name:name,phone:g('b_phone').value.trim(),vehicle:g('b_veh').value.trim(),reg:g('b_reg').value.trim().toUpperCase(),cats:cats,details:g('b_det').value.trim(),labour:num(g('b_lab').value),parts:d.parts,customs:d.customs,total:total,mode:g('b_mode').value,payments:rc>0?[{date:date,amount:rc,mode:g('b_mode').value}]:[],profit:num(g('b_prof').value),createdAt:Date.now()};
+      var b={id:uid(),no:g('b_no').value.trim()||('CX-'+pad(S.seq,4)),date:date,custId:cid,name:name,phone:g('b_phone').value.trim(),vehicle:g('b_veh').value.trim(),reg:g('b_reg').value.trim().toUpperCase(),cats:cats,details:g('b_det').value.trim(),labour:num(g('b_lab').value),parts:d.parts,customs:d.customs,total:total,due:due,mode:g('b_mode').value,payments:rc>0?[{date:date,amount:rc,mode:g('b_mode').value}]:[],profit:num(g('b_prof').value),createdAt:Date.now()};
+      if(E){
+        E.parts.forEach(function(p){var s=S.stock.find(function(x){return x.id===p.id});if(s)s.qty+=p.qty});
+        var curRc=received(E),pm=g('b_mode').value;
+        E.no=b.no;E.date=b.date;E.custId=b.custId;E.name=b.name;E.phone=b.phone;E.vehicle=b.vehicle;E.reg=b.reg;E.cats=b.cats;E.details=b.details;E.labour=b.labour;E.parts=b.parts;E.customs=b.customs;E.total=b.total;E.due=b.due;E.mode=b.mode;E.profit=b.profit;
+        if(rc>curRc)E.payments.push({date:today(),amount:rc-curRc,mode:pm});
+        else if(rc<curRc){var ex=curRc-rc;for(var i=E.payments.length-1;i>=0&&ex>0;i--){var pp=E.payments[i];if(pp.amount<=ex){ex-=pp.amount;E.payments.splice(i,1)}else{pp.amount-=ex;ex=0}}}
+        E.parts.forEach(function(p){var s=S.stock.find(function(x){return x.id===p.id});if(s)s.qty=Math.max(0,s.qty-p.qty)});
+        save();closeSheet();render();toast('Bill updated');billView(E.id);return;
+      }
       d.parts.forEach(function(p){var s=S.stock.find(function(x){return x.id===p.id});if(s)s.qty=Math.max(0,s.qty-p.qty)});
       S.bills.push(b);S.seq++;save();closeSheet();go('bills');toast('Bill saved');billView(b.id);
     };
   });
 }
+function adjOf(b){return b.total-(b.labour+b.parts.concat(b.customs).reduce(function(s,p){return s+p.price*p.qty},0))}
 function invoiceHtml(b){
   var p=S.profile,rows=[];
   if(b.labour>0||b.details)rows.push([b.details||'Service / labour',1,b.labour,b.labour,1]);
   b.parts.forEach(function(x){rows.push([x.name,x.qty,x.price,x.price*x.qty])});
   b.customs.forEach(function(x){rows.push([x.name,x.qty,x.price,x.price*x.qty])});
-  var rc=received(b),du=dueOf(b),stp=du<=0?['PAID','good']:(rc>0?['PARTIAL','warn']:['UNPAID','bad']);
+  var ad=adjOf(b);if(Math.abs(ad)>0.005)rows.push([ad<0?'Discount':'Adjustment',1,ad,ad]);
+  var rc=received(b),du=dueOf(b),disc=Math.max(0,b.total-rc-du),stp=du<=0?['PAID','good']:(rc>0?['PARTIAL','warn']:['UNPAID','bad']);
   return '<div class="paper" id="invoice"><div class="ph"><div class="pl">'+(p.logo?'<img alt="" src="'+p.logo+'">':carSvg())+'</div><div class="gn"><b>'+esc(p.name||'CarvoX Garage')+'</b><small>'+esc([p.phone,p.address].filter(Boolean).join(' · ')||'Smart Garage Manager')+'</small></div><div class="inv"><b>INVOICE</b><span>'+esc(b.no)+'</span><small style="color:var(--pp-mut)">'+fd(b.date)+'</small></div></div>'
   +'<div class="meta"><div><small>Billed to</small>'+esc(b.name||'Walk-in customer')+(b.phone?'<br>'+esc(b.phone):'')+'</div><div><small>Vehicle</small>'+esc(b.vehicle||'—')+(b.reg?'<br>'+esc(b.reg):'')+'</div></div>'
   +(b.cats.length?'<div class="svc">'+b.cats.map(function(c){return '<span>'+esc(c)+'</span>'}).join('')+'</div>':'')
   +'<div class="scroll-x"><table><thead><tr><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr></thead><tbody>'+(rows.length?rows.map(function(r){return '<tr><td>'+esc(r[0])+'</td><td>'+r[1]+'</td><td>'+inr(r[2])+'</td><td>'+inr(r[3])+'</td></tr>'}).join(''):'<tr><td colspan="4" style="text-align:center;color:var(--pp-mut)">No line items</td></tr>')+'</tbody></table></div>'
-  +'<div class="sumrow"><div class="stamp '+stp[1]+'">'+stp[0]+'</div><div class="tot"><div class="g"><span>Total</span><span>'+inr(b.total)+'</span></div><div><span>Received</span><span>'+inr(rc)+'</span></div><div class="d"><span>'+(du>0?'Balance due':'Balance')+'</span><span>'+inr(du)+'</span></div></div></div>'
+  +'<div class="sumrow"><div class="stamp '+stp[1]+'">'+stp[0]+'</div><div class="tot"><div class="g"><span>Total</span><span>'+inr(b.total)+'</span></div><div><span>Received</span><span>'+inr(rc)+'</span></div>'+(disc>0.005?'<div><span>Discount</span><span>'+inr(disc)+'</span></div>':'')+'<div class="d"><span>'+(du>0?'Balance due':'Balance')+'</span><span>'+inr(du)+'</span></div></div></div>'
   +'<div class="foot">'+(du>0?'Payment pending.':'Paid in full.')+' Thank you for choosing us.</div></div>';
 }
 function billText(b){
@@ -645,7 +664,7 @@ function billText(b){
   if(b.cats.length)L.push('Services: '+b.cats.join(', '));
   if(b.labour>0)L.push('- '+(b.details||'Service / labour')+': '+inr(b.labour));
   b.parts.concat(b.customs).forEach(function(x){L.push('- '+x.name+' x'+x.qty+': '+inr(x.price*x.qty))});
-  L.push('Total: '+inr(b.total));L.push('Received: '+inr(received(b)));L.push('Due: '+inr(dueOf(b)));L.push('Status: '+(dueOf(b)<=0?'PAID':(received(b)>0?'PARTIAL':'UNPAID')));
+  var ad=adjOf(b);if(Math.abs(ad)>0.005)L.push('- '+(ad<0?'Discount':'Adjustment')+': '+inr(ad));L.push('Total: '+inr(b.total));L.push('Received: '+inr(received(b)));var dc=Math.max(0,b.total-received(b)-dueOf(b));if(dc>0.005)L.push('Discount: '+inr(dc));L.push('Due: '+inr(dueOf(b)));L.push('Status: '+(dueOf(b)<=0?'PAID':(received(b)>0?'PARTIAL':'UNPAID')));
   L.push('Thank you!');return L.join('\n');
 }
 function waLink(b){var ph=(b.phone||'').replace(/\D/g,'');if(ph.length===10)ph='91'+ph;return 'https://wa.me/'+ph+'?text='+encodeURIComponent(billText(b))}
@@ -654,8 +673,8 @@ function billView(id){
   var du=dueOf(b);
   openSheet(b.no,invoiceHtml(b)
   +(du>0?'<div class="noprint"><div class="blk">Record payment</div><div class="three" style="grid-template-columns:1fr 1fr auto"><input id="v_amt" type="number" inputmode="decimal" min="0" value="'+du+'" aria-label="Amount"><select id="v_mode" aria-label="Mode"><option>Cash</option><option>UPI</option><option>Card</option><option>Bank transfer</option><option>Cheque</option></select><button class="btn sm" id="v_pay">Add</button></div></div>':'')
-  +'<div class="noprint"><div class="btns2" style="margin-top:18px"><a class="btn" style="text-decoration:none" href="'+waLink(b)+'" target="_blank" rel="noopener">'+ic('wa')+'WhatsApp</a><button class="btn ghost" id="v_copy">'+ic('copy')+'Copy text</button></div><button class="btn ghost block" style="margin-top:12px" id="v_print">'+ic('print')+'Print / PDF</button><button class="btn danger block" style="margin-top:12px" data-act="del" data-kind="bill" data-id="'+id+'">Delete bill</button></div>',function(){
-    var pay=$('#v_pay');if(pay)pay.onclick=function(){var a=num($('#v_amt').value);if(a<=0){toast('Enter the amount');return}b.payments.push({date:today(),amount:a,mode:$('#v_mode').value});save();render();billView(id);toast('Payment added')};
+  +'<div class="noprint"><div class="btns2" style="margin-top:18px"><a class="btn" style="text-decoration:none" href="'+waLink(b)+'" target="_blank" rel="noopener">'+ic('wa')+'WhatsApp</a><button class="btn ghost" id="v_copy">'+ic('copy')+'Copy text</button></div><button class="btn ghost block" style="margin-top:12px" data-act="editBill" data-id="'+id+'">'+ic('check')+'Edit bill</button><button class="btn ghost block" style="margin-top:12px" id="v_print">'+ic('print')+'Print / PDF</button><button class="btn danger block" style="margin-top:12px" data-act="del" data-kind="bill" data-id="'+id+'">Delete bill</button></div>',function(){
+    var pay=$('#v_pay');if(pay)pay.onclick=function(){var a=num($('#v_amt').value);if(a<=0){toast('Enter the amount');return}var dd=dueOf(b);b.payments.push({date:today(),amount:a,mode:$('#v_mode').value});b.due=Math.max(0,dd-a);save();render();billView(id);toast('Payment added')};
     $('#v_copy').onclick=function(){copyText(billText(b))};
     $('#v_print').onclick=function(){document.body.classList.add('printing');try{window.print()}catch(e){}setTimeout(function(){document.body.classList.remove('printing')},600);toast('If nothing opens, use WhatsApp or Copy text')};
   });
@@ -703,6 +722,7 @@ var ACT={
   addExpense:expenseSheet,addStaff:staffSheet,markAtt:attSheet,staffCal:function(t){calSheet(t.dataset.id)},paySalary:salarySheet,
   addSupplier:supplierSheet,recordPurchase:purchaseSheet,
   openBill:function(t){closeSheet();billView(t.dataset.id)},
+  editBill:function(t){billSheet(null,t.dataset.id)},
   info:infoSheet,
   chart:function(t){chartSheet(t.dataset.kind)},
   repDay:function(t){repDate=addDays(today(),+t.dataset.n);repMonth=repDate.slice(0,7);render()},
