@@ -2,8 +2,16 @@ import os
 from PIL import Image, ImageDraw
 
 RES = 'android/app/src/main/res'
-fg = Image.open('assets/icon-foreground.png').convert('RGBA')
-full = Image.open('assets/icon-only.png').convert('RGBA')
+
+def pick(name):
+    for d in ('.', 'assets'):
+        p = os.path.join(d, name)
+        if os.path.exists(p):
+            return p
+    raise SystemExit('Missing ' + name + '. Upload it to the repo root.')
+
+fg = Image.open(pick('icon-foreground.png')).convert('RGBA')
+full = Image.open(pick('icon-only.png')).convert('RGBA')
 DENS = {'mdpi': 1, 'hdpi': 1.5, 'xhdpi': 2, 'xxhdpi': 3, 'xxxhdpi': 4}
 
 for name, m in DENS.items():
