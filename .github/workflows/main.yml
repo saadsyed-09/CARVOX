@@ -73,7 +73,12 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          for i in 1 2 3 4; do
+            ./gradlew assembleDebug --no-daemon && exit 0
+            echo "Attempt $i failed, retrying in 30 seconds"
+            sleep 30
+          done
+          exit 1
 
       - name: Upload CARVOX APK
         uses: actions/upload-artifact@v4
