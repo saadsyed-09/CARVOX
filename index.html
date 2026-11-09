@@ -413,7 +413,7 @@ function lStaff(){
   var k=q.staff.toLowerCase(),t=today();
   var r=S.staff.filter(function(s){return !k||[s.name,s.role,s.phone].join(' ').toLowerCase().indexOf(k)>-1});
   if(!r.length)return empty(S.staff.length?'No staff found.':'No staff yet. Tap “Add staff”.');
-  return '<div class="list">'+r.map(function(s){var a=getAtt(s.id,t);return '<button class="item" data-act="staffCal" data-id="'+s.id+'"><div class="l"><b>'+esc(s.name)+'</b><small>'+esc([s.role,s.phone].filter(Boolean).join(' · ')||'No details')+(s.salary?' · '+inr(s.salary)+'/mo':'')+'</small></div><div class="r">'+(a?'<span class="pill '+STC[a.status]+'">'+a.status+'</span>':'<span class="pill mut">Not marked</span>')+'</div></button>'}).join('')+'</div>';
+  return '<div class="list">'+r.map(function(s){var a=getAtt(s.id,t);return '<div class="item" data-act="staffCal" data-id="'+s.id+'" role="button" tabindex="0" style="cursor:pointer"><div class="l"><b>'+esc(s.name)+'</b><small>'+esc([s.role,s.phone].filter(Boolean).join(' · ')||'No details')+(s.salary?' · '+inr(s.salary)+'/mo':'')+'</small></div><div class="r">'+(a?'<span class="pill '+STC[a.status]+'">'+a.status+'</span>':'<span class="pill mut">Not marked</span>')+'</div><button type="button" class="mini" data-act="editStaff" data-id="'+s.id+'" aria-label="Edit '+esc(s.name)+'">Edit</button><button type="button" class="mini" data-act="deleteStaff" data-id="'+s.id+'" aria-label="Delete '+esc(s.name)+'">'+ic('trash')+'</button></div>'}).join('')+'</div>';
 }
 function lAtt(){
   var k=q.att.toLowerCase();
@@ -510,10 +510,28 @@ function expenseSheet(){
     };
   });
 }
-function staffSheet(){
-  openSheet('Add staff',F('Name','<input id="t_name">')+'<div class="two"><div>'+F('Role','<input id="t_role" placeholder="Mechanic, Painter…">')+'</div><div>'+F('Phone','<input id="t_phone" inputmode="tel">')+'</div></div>'+F('Monthly salary (₹)','<input id="t_sal" type="number" inputmode="decimal" min="0">')+'<div class="actions"><button class="btn ghost" data-act="closeSheet">Cancel</button><button class="btn" id="t_save">Save</button></div>',function(){
-    $('#t_save').onclick=function(){var n=$('#t_name').value.trim();if(!n){toast('Enter the name');return}S.staff.push({id:uid(),name:n,role:$('#t_role').value.trim(),phone:$('#t_phone').value.trim(),salary:num($('#t_sal').value)});save();closeSheet();render();toast('Staff added')};
+function staffSheet(editId){
+  var old=editId?S.staff.find(function(x){return x.id===editId}):null;
+  if(editId&&!old){toast('Staff not found');return}
+  openSheet(old?'Edit staff':'Add staff',F('Name','<input id="t_name">')+'<div class="two"><div>'+F('Role','<input id="t_role" placeholder="Mechanic, Painter…">')+'</div><div>'+F('Phone','<input id="t_phone" inputmode="tel">')+'</div></div>'+F('Monthly salary (₹)','<input id="t_sal" type="number" inputmode="decimal" min="0">')+'<div class="actions"><button class="btn ghost" data-act="closeSheet">Cancel</button><button class="btn" id="t_save">Save</button></div>',function(){
+    if(old){$('#t_name').value=old.name||'';$('#t_role').value=old.role||'';$('#t_phone').value=old.phone||'';$('#t_sal').value=old.salary||''}
+    $('#t_save').onclick=function(){
+      var n=$('#t_name').value.trim();if(!n){toast('Enter the name');return}
+      var data={name:n,role:$('#t_role').value.trim(),phone:$('#t_phone').value.trim(),salary:num($('#t_sal').value)};
+      if(old)Object.assign(old,data);else S.staff.push(Object.assign({id:uid()},data));
+      save();closeSheet();render();toast(old?'Staff updated':'Staff added')
+    };
   });
+}
+function deleteStaff(id){
+  var staff=S.staff.find(function(x){return x.id===id});if(!staff)return;
+  if(!confirm('Delete '+staff.name+'? Attendance and salary records linked to this staff member will also be removed.'))return;
+  var salaryIds=S.salaries.filter(function(x){return x.staffId===id}).map(function(x){return x.id});
+  S.staff=S.staff.filter(function(x){return x.id!==id});
+  S.attendance=S.attendance.filter(function(x){return x.staffId!==id});
+  S.salaries=S.salaries.filter(function(x){return x.staffId!==id});
+  S.expenses=S.expenses.filter(function(x){return !salaryIds.includes(x.salaryId)});
+  save();render();toast('Staff deleted');
 }
 function attSheet(){
   if(!S.staff.length){toast('Add staff first');return}
@@ -719,7 +737,7 @@ var ACT={
   newBill:function(t){closeSheet();billSheet(t.dataset.id)},
   addStock:function(){stockSheet()},editStock:function(t){stockSheet(t.dataset.id)},
   addCustomer:function(){customerSheet()},editCustomer:function(t){customerSheet(t.dataset.id)},openCustomer:function(t){customerView(t.dataset.id)},
-  addExpense:expenseSheet,addStaff:staffSheet,markAtt:attSheet,staffCal:function(t){calSheet(t.dataset.id)},paySalary:salarySheet,
+  addExpense:expenseSheet,addStaff:function(){staffSheet()},editStaff:function(t){staffSheet(t.dataset.id)},deleteStaff:function(t){deleteStaff(t.dataset.id)},markAtt:attSheet,staffCal:function(t){calSheet(t.dataset.id)},paySalary:salarySheet,
   addSupplier:supplierSheet,recordPurchase:purchaseSheet,
   openBill:function(t){closeSheet();billView(t.dataset.id)},
   editBill:function(t){billSheet(null,t.dataset.id)},
