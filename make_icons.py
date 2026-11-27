@@ -28,9 +28,8 @@ for density, scale in SIZES.items():
     round_icon.putalpha(mask)
     round_icon.save(folder / 'ic_launcher_round.png', optimize=True)
     fg_canvas = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-    fg = foreground.copy()
-    fg.thumbnail((round(size * .66), round(size * .66)), Image.Resampling.LANCZOS)
-    fg_canvas.alpha_composite(fg, ((size - fg.width) // 2, (size - fg.height) // 2))
+    fg = foreground.resize((size, size), Image.Resampling.LANCZOS)
+    fg_canvas.alpha_composite(fg, (0, 0))
     fg_canvas.save(folder / 'ic_launcher_foreground.png', optimize=True)
 
 values = RES / 'values'
