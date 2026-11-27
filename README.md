@@ -1,19 +1,126 @@
-# CarvoX Smart Garage Manager
+CARVOX – Smart Garage Manager
 
-Mobile garage manager (billing, stock, customers, staff, expenses, reports) packaged as an Android app with Capacitor.
+A Modern, Mobile-First Garage Management System
 
-## APK kaise banaye (GitHub se)
+CARVOX is a smart garage management application designed to simplify daily workshop operations. It brings essential garage management tools together in one place, helping workshop owners manage billing, inventory, customers, staff, expenses and business records efficiently.
 
-1. GitHub pe naya repository banao (private bhi chalega).
-2. Is zip ke andar ki saari files repository mein upload karo (`.github` folder samet).
-3. Repository ke **Actions** tab mein jao. Build apne aap chalega, ya **Build APK** pe click karke **Run workflow** dabao.
-4. 4-6 minute baad run khulega, neeche **Artifacts** mein `CarvoX-apk` milega. Download karke zip kholo, andar `app-debug.apk` hai.
-5. APK phone mein bhej ke install karo (Unknown sources allow karna padega).
+Built with a clean, modern interface and designed for Android devices.
 
-## App badalna
+---
 
-App ka pura code `www/index.html` mein hai. Isme badlav karke push karo, naya APK ban jayega.
+✨ Key Features
 
-## Data
+📊 Dashboard
 
-Saara data phone mein hi save hota hai. App uninstall karne se pehle Settings se backup copy kar lena.
+- Overview of garage operations
+- Business performance insights
+- Earnings and expense tracking
+- Quick access to essential modules
+
+🧾 Billing & Invoicing
+
+- Create and manage customer bills
+- Track billing records
+- Support for different payment modes
+- Print and share invoices
+
+📦 Inventory Management
+
+- Manage spare parts and stock
+- Track available inventory
+- Organize parts and categories
+
+👥 Customer Management
+
+- Maintain customer records
+- Access customer information
+- Organize service-related records
+
+🛠️ Staff Management
+
+- Manage employee details
+- Track staff attendance
+- Maintain staff records
+
+💰 Financial Management
+
+- Record daily expenses
+- Monitor earnings and profit
+- Track received payments
+- Maintain business transactions
+
+📈 Reports
+
+- Access business records
+- Review financial performance
+- Monitor garage operations
+
+---
+
+🧰 Technology Stack
+
+Technology| Purpose
+HTML5| Application structure
+CSS3| User interface and styling
+JavaScript| Application functionality
+Capacitor| Android application packaging
+Python| Supporting build utilities
+GitHub Actions| Automated build workflow
+
+---
+
+📱 Android Application
+
+CARVOX is packaged as an Android application using Capacitor.
+
+The project supports an automated APK build workflow through GitHub Actions.
+
+Build APK
+
+1. Open the repository on GitHub.
+2. Navigate to the Actions tab.
+3. Select the available Android build workflow.
+4. Run the workflow if required.
+5. Wait for the build to complete.
+6. Download the APK from the generated Artifacts.
+
+---
+
+💾 Data & Backup
+
+- Business records are stored locally on the device.
+- Keep regular backups of important business data.
+- Export and preserve your backup before reinstalling or resetting the application.
+
+Important: Uninstalling the application or clearing its data may result in loss of locally stored records.
+
+---
+
+🎯 Project Objective
+
+The goal of CARVOX is to make garage management simpler, faster and more organized by replacing scattered manual records with a centralized digital management solution.
+
+Whether managing billing, inventory or daily workshop operations, CARVOX aims to provide a convenient management experience.
+
+---
+
+👨‍💻 Project Information
+
+Project Name: CARVOX
+Category: Garage Management / Business Management
+Platform: Android
+Repository: "CARVOX on GitHub" (https://github.com/saadsyed-09/CARVOX)
+
+---
+
+📄 License
+
+This project is currently maintained as an independent project. All rights reserved unless otherwise specified.
+
+---
+
+<p align="center">CARVOX
+
+Manage Smarter. Work Better.
+
+</p>
