@@ -1,37 +1,69 @@
+
 import os
 from PIL import Image, ImageDraw
 
-RES = 'android/app/src/main/res'
+RES = "android/app/src/main/res"
+SIZES = {
+    "mdpi": 1,
+    "hdpi": 1.5,
+    "xhdpi": 2,
+    "xxhdpi": 3,
+    "xxxhdpi": 4
+}
 
 def pick(name):
-    for d in ('.', 'assets'):
-        p = os.path.join(d, name)
-        if os.path.exists(p):
-            return p
-    raise SystemExit('Missing ' + name + '. Upload it to the repo root.')
+    for folder in (".", "assets"):
+        path = os.path.join(folder, name)
+        if os.path.exists(path):
+            return path
+    raise SystemExit(f"Missing {name}. Upload it to repo root.")
 
-fg = Image.open(pick('icon-foreground.png')).convert('RGBA')
-full = Image.open(pick('icon-only.png')).convert('RGBA')
-DENS = {'mdpi': 1, 'hdpi': 1.5, 'xhdpi': 2, 'xxhdpi': 3, 'xxxhdpi': 4}
+# Transparent black logo foreground
+fg = Image.open(pick("icon-foreground.png")).convert("RGBA")
 
-for name, m in DENS.items():
-    out = os.path.join(RES, 'mipmap-' + name)
+# Complete white-background launcher icon
+full = Image.open(pick("icon-only.png")).convert("RGBA")
+
+for name, scale in SIZES.items():
+    size = int(192 * scale)
+    out = os.path.join(RES, f"mipmap-{name}")
     os.makedirs(out, exist_ok=True)
-    a = int(108 * m)
-    fg.resize((a, a), Image.LANCZOS).save(os.path.join(out, 'ic_launcher_foreground.png'))
-    l = int(48 * m)
-    sq = full.resize((l, l), Image.LANCZOS)
-    sq.save(os.path.join(out, 'ic_launcher.png'))
-    big = 4
-    mask = Image.new('L', (l * big, l * big), 0)
-    ImageDraw.Draw(mask).ellipse((0, 0, l * big - 1, l * big - 1), fill=255)
-    mask = mask.resize((l, l), Image.LANCZOS)
-    rd = Image.new('RGBA', (l, l), (0, 0, 0, 0))
-    rd.paste(sq, (0, 0), mask)
-    rd.save(os.path.join(out, 'ic_launcher_round.png'))
 
-vals = os.path.join(RES, 'values')
-os.makedirs(vals, exist_ok=True)
-with open(os.path.join(vals, 'ic_launcher_background.xml'), 'w') as f:
-    f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#050608</color>\n</resources>\n')
-print('icons written')
+    # Adaptive foreground with transparent padding
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    fg.thumbnail((int(108 * scale), int(108 * scale)),
+                 Image.Resampling.LANCZOS)
+
+    x = (size - fg.width) // 2
+    y = (size - fg.height) // 2
+    canvas.alpha_composite(fg, (x, y))
+
+    canvas.save(os.path.join(out, "ic_launcher_foreground.png"))
+
+    # Standard launcher icon
+    icon = full.resize(
+        (size, size), Image.Resampling.LANCZOS
+    )
+    icon.save(os.path.join(out, "ic_launcher.png"))
+
+    # Round launcher icon
+    round_icon = icon.copy()
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, size - 1, size - 1), fill=255)
+    round_icon.putalpha(mask)
+    round_icon.save(os.path.join(out, "ic_launcher_round.png"))
+
+# Pure white adaptive background
+values = os.path.join(RES, "values")
+os.makedirs(values, exist_ok=True)
+
+with open(os.path.join(values, "ic_launcher_background.xml"),
+          "w", encoding="utf-8") as f:
+    f.write('''<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>
+''')
+
+print("CARVOX launcher icons generated successfully!")
