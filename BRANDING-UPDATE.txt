@@ -1,0 +1,13 @@
+CARVOX branding update
+
+Changed:
+- Home header emblem in index.html only.
+- Android launcher icon artwork and generator.
+- Added updated full logo and emblem assets.
+
+Not changed:
+- Splash screen resources/configuration.
+- Existing app logic, records, backup format, themes, and other screens.
+
+Copy the files into the repository root, keeping the assets/ copies as supplied.
+Run make_icons.py from the repository root when the Android native project exists.
